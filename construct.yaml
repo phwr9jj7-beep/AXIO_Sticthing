@@ -1,0 +1,6 @@
+name: AXIOStitchingStudio
+version: 1.0.0
+channels:
+  - conda-forge
+  - pytorch
+environment_file: environment.yml

@@ -1,0 +1,21 @@
+name: axio-stitch-env
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.12
+  - pyside6
+  - numpy
+  - scipy
+  - tifffile
+  - scikit-image
+  - opencv
+  - networkx
+  - pillow
+  - pytorch-cpu
+  - pip
+  - pip:
+      - basicpy==2.0.0
+      - torch-dct
+      - hyperactive
+      - pooch

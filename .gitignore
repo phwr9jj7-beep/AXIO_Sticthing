@@ -1,0 +1,52 @@
+# OS generated files #
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Office Temp Files
+~$*.doc
+~$*.docx
+~$*.xls
+~$*.xlsx
+~$*.ppt
+~$*.pptx
+
+# Python environment and cache
+.venv/
+__pycache__/
+*.pyc
+
+# Local IDE configuration
+.obsidian/
+.vscode/
+
+# Log files
+*.log
+!benchmark_full_res.log
+!benchmark_full_res_recognized.log
+!pipeline_full_res.log
+
+# Ignore ALL raw image data globally to prevent Git bloat
+*.tif
+*.czi
+*.pzfx
+*.prism
+*.mp4
+
+# Large generated directories (exclude from Git to prevent repository bloat)
+intermediate/
+01.Results/
+02.Results/
+
+# Specific raw datasets exclusions
+00.RawData/MouseTestRawdata20260421/
+
+# Ignore outputs generated under RawData
+00.RawData/**/Stitched_Output/
+
+# Symlinks/Junctions (ignore to avoid double tracking)
+Wiki/
