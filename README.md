@@ -42,10 +42,17 @@ graph TD
 - **Multi-Channel & Split-Channel Stitching**: Automatically align fluorescent channels based on a reference channel.
 - **3D Z-Stack Support**: Stitch volumetric data with MIP or Reference-Slice alignment.
 
+## 📥 Quick Start (No Python Required)
+
+For Windows users who want to run the software without setting up Python, you can download the standalone executable:
+1. Go to the [Releases](https://github.com/phwr9jj7-beep/AXIO_Sticthing/releases) page.
+2. Download the `AXIO_Stitching_Studio_Windows.zip` archive.
+3. Extract the contents and double-click `AXIO_Stitching_Studio.exe` to launch the GUI.
+
 ## 🛠️ Installation
 
 ```bash
-git clone https://github.com/wong-ziyi/AXIO_Sticthing.git
+git clone https://github.com/phwr9jj7-beep/AXIO_Sticthing.git
 cd AXIO_Sticthing
 conda env create -f environment.yml
 conda activate axio_stitching
@@ -71,9 +78,9 @@ bash launcher.sh
 
 ## 📖 Wiki & Documentation
 
-Comprehensive architectural guidelines, testing specifications, and workflow protocols can be found in the [GitHub Wiki](https://github.com/wong-ziyi/AXIO_Sticthing/wiki).
+Comprehensive architectural guidelines, testing specifications, and workflow protocols can be found in the [GitHub Wiki](https://github.com/phwr9jj7-beep/AXIO_Sticthing/wiki).
 
-Have a question? Join the [Discussions Forum](https://github.com/wong-ziyi/AXIO_Sticthing/discussions)!
+Have a question? Join the [Discussions Forum](https://github.com/phwr9jj7-beep/AXIO_Sticthing/discussions)!
 
 ## 📂 Data Availability
 

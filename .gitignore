@@ -50,3 +50,9 @@ intermediate/
 
 # Symlinks/Junctions (ignore to avoid double tracking)
 Wiki/
+
+# PyInstaller build artifacts
+dist/
+build/
+*.spec
+

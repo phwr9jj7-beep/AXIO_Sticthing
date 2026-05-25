@@ -43,20 +43,35 @@ class StitchWorker(QThread):
         runner_path = os.path.join(script_dir, "gui_runner.py")
         
         # Build command list
-        cmd = [
-            sys.executable,
-            runner_path,
-            "--xml", self.xml_path,
-            "--out-dir", self.out_dir,
-            "--correction", self.correction,
-            "--algorithm", self.algorithm,
-            "--ref-channel", str(self.ref_channel),
-            "--ref-tag", self.ref_tag,
-            "--target-tags", self.target_tags,
-            "--alignment-mode", self.alignment_mode,
-            "--z-mode", self.z_mode,
-            "--ref-z-slice", str(self.ref_z_slice)
-        ]
+        if getattr(sys, 'frozen', False):
+            cmd = [
+                sys.executable,
+                "--xml", self.xml_path,
+                "--out-dir", self.out_dir,
+                "--correction", self.correction,
+                "--algorithm", self.algorithm,
+                "--ref-channel", str(self.ref_channel),
+                "--ref-tag", self.ref_tag,
+                "--target-tags", self.target_tags,
+                "--alignment-mode", self.alignment_mode,
+                "--z-mode", self.z_mode,
+                "--ref-z-slice", str(self.ref_z_slice)
+            ]
+        else:
+            cmd = [
+                sys.executable,
+                runner_path,
+                "--xml", self.xml_path,
+                "--out-dir", self.out_dir,
+                "--correction", self.correction,
+                "--algorithm", self.algorithm,
+                "--ref-channel", str(self.ref_channel),
+                "--ref-tag", self.ref_tag,
+                "--target-tags", self.target_tags,
+                "--alignment-mode", self.alignment_mode,
+                "--z-mode", self.z_mode,
+                "--ref-z-slice", str(self.ref_z_slice)
+            ]
         
         if self.scene is not None:
             cmd += ["--scene", str(self.scene)]

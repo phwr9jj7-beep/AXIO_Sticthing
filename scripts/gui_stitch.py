@@ -693,4 +693,8 @@ def main():
     sys.exit(app.exec())
 
 if __name__ == "__main__":
-    main()
+    if "--xml" in sys.argv:
+        from gui_runner import main as runner_main
+        runner_main()
+    else:
+        main()
