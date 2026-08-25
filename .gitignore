@@ -54,5 +54,10 @@ Wiki/
 # PyInstaller build artifacts
 dist/
 build/
+# Track AXIO_Stitching_Studio.spec but ignore other generated .spec files
 *.spec
+!AXIO_Stitching_Studio.spec
+
+# Editable install metadata (pip install -e .)
+*.egg-info/
 

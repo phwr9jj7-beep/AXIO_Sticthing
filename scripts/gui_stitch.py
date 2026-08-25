@@ -693,6 +693,9 @@ def main():
     sys.exit(app.exec())
 
 if __name__ == "__main__":
+    # NOTE: the packaged executable's entry point is scripts/axio_launcher.py, which
+    # dispatches --mcp-serve / --cli BEFORE Qt is imported. This block keeps the historical
+    # `python scripts/gui_stitch.py --xml ...` behaviour working in a source checkout.
     if "--xml" in sys.argv:
         from gui_runner import main as runner_main
         runner_main()

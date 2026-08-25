@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "axio-stitching": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "axio_stitching.mcp_server"],
+      "env": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}
