@@ -1,0 +1,16 @@
+# AXIO Stitching Studio -- Codex CLI MCP configuration (project scope).
+#
+# This file registers the DEV-CHECKOUT server, launched with whatever `python` is on PATH,
+# so it only works when the project's environment is active. For a real install use
+#     axio agent install --target codex
+# which writes a `[mcp_servers.axio-stitching]` table into the shared $CODEX_HOME/config.toml
+# with an absolute interpreter path, and can be reverted with `axio agent uninstall`.
+
+[mcp_servers.axio-stitching]
+command = "python"
+args = ["-m", "axio_stitching.mcp_server"]
+startup_timeout_sec = 60
+
+[mcp_servers.axio-stitching.env]
+PYTHONUTF8 = "1"
+PYTHONIOENCODING = "utf-8"

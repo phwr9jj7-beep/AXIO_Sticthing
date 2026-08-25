@@ -76,6 +76,54 @@ bash launcher.sh
 3. Configure multi-channel settings if necessary.
 4. Click **Run Stitching Pipeline**.
 
+### Command line
+
+The same pipeline is available headlessly through the `axio` command (`pip install -e ".[all]"`):
+
+```bash
+axio doctor                                                   # diagnose the environment first
+axio inspect  --xml "D:/data/scan_info.xml"                    # scenes, tiles, channels, Z
+axio estimate --xml "D:/data/scan_info.xml" --out-dir "D:/out" # canvas, peak RAM, disk, time
+axio validate --xml "D:/data/scan_info.xml" --out-dir "D:/out"
+axio stitch   --xml "D:/data/scan_info.xml" --out-dir "D:/out" --correction basicpy --algorithm phase
+axio qc       "D:/out/stitched_scene0_phase.tif"               # empty area, clipping, seams
+```
+
+`axio estimate` is worth the ten seconds it costs: these canvases are gigapixel, and it
+reports whether the job fits in RAM and on disk *before* you spend an hour finding out.
+Every command takes `--json` for scripting.
+
+## 🤖 AI agent integration (MCP + Skill)
+
+AXIO ships an **MCP server** (16 typed tools) and an **Agent Skill**, and an installer that
+wires both into the agent platforms on your machine:
+
+```bash
+axio agent status              # what is detected, installed, or drifted
+axio agent install --dry-run   # every file and config key that would change
+axio agent install             # every platform detected on this machine
+axio agent uninstall           # remove only what AXIO wrote, hash-verified
+```
+
+| Target | Covers |
+|---|---|
+| `claude-code` | Claude Code CLI **and** the Claude Code desktop app |
+| `codex` | Codex CLI, the Codex IDE extension, and the **ChatGPT desktop app** |
+| `antigravity` | Google Antigravity IDE |
+| `claude-desktop` | The classic Claude Desktop app |
+| `gemini-cli` | Gemini CLI |
+
+Shared config files (Codex's `config.toml`, Antigravity's `mcp_config.json`, Claude Desktop's
+`claude_desktop_config.json`) are edited **surgically**: one owned key, backed up before the
+first change, written atomically, and removed on uninstall only while it still hashes to what
+was written — anything you have since edited is reported as drift and left alone.
+
+Long stitches run as background jobs (`axio_start_stitch` → `axio_job_status`), because a real
+scene takes minutes to hours and a synchronous tool call would simply time out.
+
+See **[docs/AGENT_INTEGRATION.md](docs/AGENT_INTEGRATION.md)** for the per-platform paths, the
+full tool list, and the safety contract.
+
 ## 📖 Wiki & Documentation
 
 Comprehensive architectural guidelines, testing specifications, and workflow protocols can be found in the [GitHub Wiki](https://github.com/phwr9jj7-beep/AXIO_Sticthing/wiki).

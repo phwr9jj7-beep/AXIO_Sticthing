@@ -19,3 +19,10 @@ dependencies:
       - torch-dct
       - hyperactive
       - pooch
+      - "pydantic>=2.0"
+      - "typer[all]>=0.9"
+      - "rich>=13.0"
+      - "mcp[cli]>=1.0"
+      - "psutil>=5.9"
+      - tqdm
+      - "-e ."
