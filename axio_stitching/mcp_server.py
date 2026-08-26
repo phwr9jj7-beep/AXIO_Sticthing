@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -316,15 +317,16 @@ def axio_inspect_dataset(
                 break
         if sample is not None:
             info = detect_tile_axes(sample)
-            metadata["tile_geometry"] = {
+            geometry = {
                 "sample_file": sample.name,
                 "axes": info["axes"],
                 "tile_height": int(info["H"]),
                 "tile_width": int(info["W"]),
                 "channels_per_file": int(info["num_channels"]),
                 "z_per_file": int(info["num_z"]),
-                "layout": "multi-page" if int(info["num_channels"]) > 1 else "single-channel-or-split",
             }
+            geometry.update(_scan_filename_dimensions(raw_dir, geometry))
+            metadata["tile_geometry"] = geometry
         else:
             metadata["tile_geometry"] = {
                 "error": "no tile file named by the source was found; the raw TIFFs must sit "
@@ -334,6 +336,76 @@ def axio_inspect_dataset(
         metadata["tile_geometry"] = {"error": f"{type(exc).__name__}: {exc}"}
 
     return _json(metadata)
+
+
+_CHANNEL_TAG = re.compile(r"_c(\d+)_", re.IGNORECASE)
+_Z_TAG = re.compile(r"_z(\d+)_", re.IGNORECASE)
+
+
+def _scan_filename_dimensions(raw_dir: Path, geometry: dict) -> dict:
+    """
+    Channels and Z-slices that live in SEPARATE FILES rather than inside the sample tile.
+
+    A metadata file typically names only the reference set (e.g. the ``_c1_`` files, or the
+    ``_z00_`` files), so the sample tile alone under-reports the dataset: a split-channel scan
+    reads as 1 channel and a filename-tagged Z-stack reads as z=1 — and an agent choosing
+    parameters from that would silently stitch one channel, 2D. This scans the WHOLE tile
+    directory's filenames for ``_c<N>_`` and ``_z<NN>_`` tags and turns what it finds into
+    the exact parameters to pass, so recognition never depends on the agent guessing.
+    """
+    names = []
+    try:
+        names = [p.name for p in raw_dir.iterdir()
+                 if p.is_file() and p.suffix.lower() in (".tif", ".tiff")]
+    except OSError:
+        pass
+
+    channel_tags = sorted(
+        {match.group(0).lower() for name in names for match in [_CHANNEL_TAG.search(name)] if match},
+        key=lambda tag: int(_CHANNEL_TAG.search(tag).group(1)),  # type: ignore[union-attr]
+    )
+    z_indices = sorted(
+        {int(match.group(1)) for name in names for match in [_Z_TAG.search(name)] if match}
+    )
+
+    out: dict = {}
+    recommendations: list[str] = []
+
+    channels_in_file = geometry.get("channels_per_file", 1)
+    if len(channel_tags) > 1:
+        out["layout"] = "split-channel"
+        out["split_channel_tags"] = channel_tags
+        recommendations.append(
+            f"split-channel dataset ({len(channel_tags)} channels as separate files): pass "
+            f"ref_tag='{channel_tags[0]}' and target_tags='{','.join(channel_tags[1:])}' so "
+            "every channel is stitched in register"
+        )
+    elif channels_in_file > 1:
+        out["layout"] = "multi-page"
+        recommendations.append(
+            f"{channels_in_file} channels inside each tile file: pick ref_channel "
+            "(the channel with the most structure) for registration"
+        )
+    else:
+        out["layout"] = "single-channel"
+
+    z_in_file = geometry.get("z_per_file", 1)
+    if len(z_indices) > 1:
+        out["z_slices_from_filenames"] = len(z_indices)
+        recommendations.append(
+            f"Z-stack as separate files (_z tags, {len(z_indices)} slices): choose a z_mode - "
+            "'mip_output_only' for a cheap projection, 'mip_align_3d' or 'ref_slice_3d' for "
+            "the full volume. z_mode='none' would silently stitch a single slice."
+        )
+    elif z_in_file > 1:
+        recommendations.append(
+            f"{z_in_file} Z-slices inside each tile file: choose a z_mode - 'mip_output_only' "
+            "for a cheap projection, 'mip_align_3d'/'ref_slice_3d' for the full volume"
+        )
+
+    if recommendations:
+        out["recommendations"] = recommendations
+    return out
 
 
 @mcp.tool()

@@ -413,11 +413,19 @@ The pipeline is **not** Zeiss-only. A `source` may be any of:
   `source_type` and `confidence`, the scenes, the tiles per scene with positions and sizes, the
   tile pixel dimensions, the channel and Z-slice counts, and the pixel scale in um when known.
 
-Read this BEFORE proposing anything: it tells you whether the dataset is **multi-page**
-(channels inside each tile TIFF — use `ref_channel`) or **split-channel** (one file per
-channel, distinguished by a filename tag — use `ref_tag` + `target_tags`), how many scenes
-there are, and whether there is a Z dimension at all. Those three facts decide every
-parameter below. **`axio_list_algorithms`** gives you the exact vocabulary of legal values.
+Read this BEFORE proposing anything. Its `tile_geometry` names the dataset's shape in BOTH
+representations channels and Z can take — inside the tile file or as separate files:
+
+- `layout`: `multi-page` (channels inside each TIFF — use `ref_channel`) |
+  `split-channel` (one file per channel — use `ref_tag` + `target_tags`) | `single-channel`.
+- `split_channel_tags`: the actual `_cN_` tags found (e.g. `["_c1_","_c2_"]`).
+- `z_per_file` (Z inside each TIFF) and `z_slices_from_filenames` (Z as separate `_zNN_`
+  files). **Either being > 1 means the dataset is a Z-stack** — choose a `z_mode`, or the
+  stitch silently produces a single 2-D slice.
+- `recommendations`: those facts restated as the exact parameters to pass. Follow them.
+
+Those facts decide every parameter below. **`axio_list_algorithms`** gives you the exact
+vocabulary of legal values.
 
 **Non-Zeiss inputs — two rules:**
 1. A **filename-grid** folder gives only an *approximate* layout (`confidence: low`), exactly

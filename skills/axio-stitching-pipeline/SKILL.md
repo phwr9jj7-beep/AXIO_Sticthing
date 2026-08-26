@@ -69,10 +69,13 @@ axio inspect --source "D:/data/fiji_tiles"           # a folder with TileConfigu
 axio inspect --source "D:/data/ome_tiles" --json     # OME-TIFFs with stage positions
 ```
 
-(`--xml` is a legacy alias for `--source`.) The report tells you the three facts that decide
-every parameter — how many **scenes**, whether tiles are **multi-page** (channels inside each
-TIFF → `--ref-channel`) or **split-channel** (one file per channel → `--ref-tag`/`--target-tags`),
-and whether there is a **Z** dimension — plus the detected `source_type` and `confidence`.
+(`--xml` is a legacy alias for `--source`.) The report's `tile_geometry` names the dataset's
+shape in BOTH representations channels and Z can take — inside the tile file or as separate
+files: `layout` (`multi-page` → `--ref-channel` | `split-channel` → `--ref-tag`/`--target-tags`
+| `single-channel`), `split_channel_tags` (the actual `_cN_` tags found), `z_per_file` and
+`z_slices_from_filenames` (**either > 1 means a Z-stack — choose a `--z-mode`, or the stitch
+silently produces a single 2-D slice**), and `recommendations` — the same facts restated as
+the exact parameters to pass. It also reports the detected `source_type` and `confidence`.
 
 **Non-Zeiss rules:** a **filename-grid folder** is only an approximate layout
 (`confidence: low`) — stitch it with `phase`/`sift`, **not** `coordinate`, and pass `--overlap`
