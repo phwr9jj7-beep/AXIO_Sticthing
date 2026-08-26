@@ -44,10 +44,18 @@ graph TD
 
 ## 📥 Quick Start (No Python Required)
 
-For Windows users who want to run the software without setting up Python, you can download the standalone executable:
+For Windows users, one installer sets up everything — the desktop GUI, the `axio` CLI, the
+MCP server, and (optionally, checked by default) the AI-agent integration for every platform
+detected on your machine (Claude Code, ChatGPT/Codex, Google Antigravity, Claude Desktop,
+Gemini CLI):
+
 1. Go to the [Releases](https://github.com/phwr9jj7-beep/AXIO_Sticthing/releases) page.
-2. Download the `AXIO_Stitching_Studio_Windows.zip` archive.
-3. Extract the contents and double-click `AXIO_Stitching_Studio.exe` to launch the GUI.
+2. Download and run `AXIO_Stitching_Studio_<version>_Setup.exe` (per-user install, no admin).
+3. Launch **AXIO Stitching Studio** from the Start menu. Restart any open agent apps once so
+   they pick up the new MCP server.
+
+Uninstalling cleanly deregisters the agent integration before removing files. To rebuild the
+installer from source: `python scripts/build_installer.py` (needs PyInstaller + Inno Setup 6).
 
 ## 🛠️ Installation
 
