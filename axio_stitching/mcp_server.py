@@ -789,25 +789,41 @@ def axio_list_outputs(directory: str) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def axio_launch_gui(out_dir: str = "", source: str = "") -> str:
+def axio_launch_gui(
+    out_dir: str = "",
+    source: str = "",
+    correction: str = "",
+    algorithm: str = "",
+    scene: int | None = None,
+) -> str:
     """
-    Open AXIO Stitching Studio so the user can view a mosaic at full resolution and re-run
-    with adjusted parameters.
+    Open AXIO Stitching Studio ON YOUR WORK: the app adopts the dataset, the parameters you
+    used, and displays the newest stitched preview from out_dir - not a blank form.
 
     Do this once you have an output worth reviewing — a file path in a chat log is not a
-    delivered result. If the app cannot be located the tool says so and lists what it tried;
-    relay that rather than guessing at a path.
+    delivered result. ALWAYS pass out_dir (it is what makes the finished preview appear) and,
+    when you just ran a stitch, the same source/correction/algorithm/scene you used, so the
+    user sees exactly what happened and can tweak and re-run from there. If the app cannot be
+    located the tool says so — relay that rather than guessing at a path.
 
     Args:
-        out_dir: Output directory to pre-fill in the app.
-        source: Dataset (Zeiss XML or tile directory) to pre-fill in the app.
+        out_dir: Output directory — the app shows the newest stitched preview found in it.
+        source: Dataset (Zeiss XML or tile directory) to load into the app.
+        correction: Correction the run used, pre-selected in the app.
+        algorithm: Algorithm the run used, pre-selected in the app.
+        scene: Scene index the run used, pre-selected in the app.
 
     Returns:
         JSON with keys: launched (bool), app_path, pid, reason, tried.
     """
     from .agent_runner import find_app_path
 
-    app = os.environ.get("AXIO_STITCHING_APP") or find_app_path()
+    # The env var is baked at agent-install time and can go stale (e.g. the app moved or the
+    # bundle layout changed since installation) — trust it only while it still points at a
+    # real file, then fall back to fresh discovery.
+    app = os.environ.get("AXIO_STITCHING_APP")
+    if not app or not Path(app).exists():
+        app = find_app_path()
     if not app or not Path(app).exists():
         return _json(
             {
@@ -830,6 +846,12 @@ def axio_launch_gui(out_dir: str = "", source: str = "") -> str:
         env["AXIO_STITCHING_OUT_DIR"] = str(Path(out_dir).expanduser())
     if source:
         env["AXIO_STITCHING_XML"] = str(Path(source).expanduser())
+    if correction:
+        env["AXIO_STITCHING_CORRECTION"] = correction
+    if algorithm:
+        env["AXIO_STITCHING_ALGORITHM"] = algorithm
+    if scene is not None:
+        env["AXIO_STITCHING_SCENE"] = str(scene)
 
     # Detach: the GUI is for the human and must outlive this server process, which the agent
     # host will kill as soon as the conversation ends.

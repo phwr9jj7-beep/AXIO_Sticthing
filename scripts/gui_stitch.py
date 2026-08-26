@@ -130,6 +130,10 @@ class MainWindow(QMainWindow):
         self.current_xml_path = None
         self.setup_ui()
         self.setup_styles()
+        # When an AI agent (or `axio_launch_gui`) opened this window, adopt its context so
+        # the user sees the dataset, the parameters that were used, and the finished preview
+        # instead of a blank form.
+        self._apply_launch_context()
 
     def setup_ui(self):
         # Main Widget and layout
@@ -472,6 +476,85 @@ class MainWindow(QMainWindow):
         path = Path(text)
         if path.exists() and path.is_file():
             self.on_file_loaded(text)
+
+    # -- Launch context (agent handoff) ------------------------------------------------
+
+    def _apply_launch_context(self):
+        """
+        Adopt the context an external launcher passed via environment variables.
+
+        The MCP tool `axio_launch_gui` (and any script) can set:
+            AXIO_STITCHING_XML         - dataset to load (fills Dataset Details + scenes)
+            AXIO_STITCHING_OUT_DIR     - output directory
+            AXIO_STITCHING_CORRECTION  - correction the run used   (basicpy|median|spatial|none)
+            AXIO_STITCHING_ALGORITHM   - algorithm the run used    (phase|sift|coordinate)
+            AXIO_STITCHING_SCENE       - scene index the run used  (integer)
+
+        Without these the window opens blank, which reads to the user as "the app ignored
+        what the agent just did" - the handoff has to carry the work, not just the binary.
+        """
+        out_dir = os.environ.get("AXIO_STITCHING_OUT_DIR", "").strip()
+        xml = os.environ.get("AXIO_STITCHING_XML", "").strip()
+
+        # Output dir BEFORE the XML: on_file_loaded only autofills an EMPTY output field.
+        if out_dir:
+            self.out_input.setText(out_dir)
+        if xml and Path(xml).is_file():
+            # setText fires on_xml_text_changed -> on_file_loaded, which populates the
+            # Dataset Details panel and the scene dropdown.
+            self.xml_input.setText(xml)
+
+        correction = os.environ.get("AXIO_STITCHING_CORRECTION", "").strip()
+        if correction:
+            idx = self.correction_combo.findData(correction)
+            if idx >= 0:
+                self.correction_combo.setCurrentIndex(idx)
+        algorithm = os.environ.get("AXIO_STITCHING_ALGORITHM", "").strip()
+        if algorithm:
+            idx = self.algo_combo.findData(algorithm)
+            if idx >= 0:
+                self.algo_combo.setCurrentIndex(idx)
+        scene_raw = os.environ.get("AXIO_STITCHING_SCENE", "").strip()
+        if scene_raw:
+            try:
+                idx = self.scene_combo.findData(int(scene_raw))
+                if idx >= 0:
+                    self.scene_combo.setCurrentIndex(idx)
+            except ValueError:
+                pass
+
+        if out_dir:
+            self._show_existing_preview(Path(out_dir))
+
+    def _show_existing_preview(self, out_dir: Path):
+        """
+        Display the newest stitched preview a previous run left in ``out_dir`` and switch to
+        the preview tab - so opening the app on finished work SHOWS the work.
+        """
+        try:
+            previews = sorted(
+                out_dir.glob("stitched_*_preview.png"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            return
+        if not previews:
+            return
+        target = previews[0]
+        try:
+            pixmap = QPixmap(str(target))
+            if pixmap.isNull():
+                return
+            self.preview_label.setPixmap(pixmap)
+            self.preview_label.setText("")
+            self.log_viewer.appendPlainText(
+                f"[PREVIEW] Loaded existing output: {target.name} "
+                f"(from a previous run in {out_dir})"
+            )
+            self.tab_widget.setCurrentIndex(1)
+        except Exception as e:
+            self.log_viewer.appendPlainText(f"[PREVIEW] Could not load {target.name}: {e}")
 
     def on_z_mode_changed(self):
         mode = self.z_mode_combo.currentData()
