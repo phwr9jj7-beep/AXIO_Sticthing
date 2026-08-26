@@ -2,7 +2,7 @@
 
 AXIO Stitching Studio exposes its pipeline to AI coding agents through two artefacts:
 
-- an **MCP server** (`axio_stitching.mcp_server`) that publishes the pipeline as 16 typed
+- an **MCP server** (`axio_stitching.mcp_server`) that publishes the pipeline as 17 typed
   tools over stdio, and
 - an **Agent Skill** (`skills/axio-stitching-pipeline/`) that teaches an agent how and when
   to use them.
@@ -140,7 +140,8 @@ or `foreign` (it is not ours).
 |---|---|
 | `axio_doctor` | Environment diagnosis. Call first. |
 | `axio_list_algorithms` | Legal values for every parameter, with guidance. |
-| `axio_inspect_dataset` | Scenes, tiles, channels, Z, pixel scale from the Zeiss XML. |
+| `axio_detect_source` | Cheap classification of an unknown dataset (`zeiss`/`fiji`/`ome`/`explicit`/`grid`). |
+| `axio_inspect_dataset` | Scenes, tiles, channels, Z, pixel scale — from ANY supported source. Recognizes split-channel (`_cN_`) and filename-tag Z (`_zNN_`) layouts and emits the exact parameters to pass. |
 | `axio_estimate_stitch` | Canvas size, peak RAM, disk, rough time, and a fit verdict. |
 | `axio_validate_stitch` | Prerequisites and missing-tile check. |
 | `axio_start_stitch` | Start a background run; returns a job id. |

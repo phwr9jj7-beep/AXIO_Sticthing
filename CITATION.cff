@@ -4,8 +4,8 @@ authors:
   - family-names: "Wong"
     given-names: "Ziyi"
 title: "AXIO Stitching Studio"
-version: 1.0.0
-date-released: 2026-05-25
+version: 1.1.0
+date-released: 2026-08-26
 url: "https://github.com/wong-ziyi/AXIO_Sticthing"
-description: "A high-throughput, high-resolution spatial microscopy data processing pipeline designed for Zeiss Axio Microscope tile scans."
+description: "A high-throughput microscopy tile-scan stitching pipeline (Zeiss and vendor-neutral) with a desktop GUI, a CLI, and an MCP tool server for AI agents."
 license: MIT
