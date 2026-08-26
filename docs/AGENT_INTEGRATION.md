@@ -171,21 +171,37 @@ will wait for synchronously, so `axio_start_stitch` + `axio_job_status` is the n
 
 ---
 
-## Packaged builds
+## Packaged builds — the fused installer
 
-The Windows release ships **two** executables from one PyInstaller analysis:
+The Windows release is **one installer** (`AXIO_Stitching_Studio_<version>_Setup.exe`, built
+by `scripts/build_installer.py` from `installer/AXIO_Stitching_Setup.iss`) that installs a
+shared one-directory bundle:
 
-- `AXIO_Stitching_Studio.exe` — the GUI (windowed).
-- `AXIO_Stitching_MCP.exe` — the headless surfaces: `--mcp-serve` for the MCP server and
-  `--cli ...` for the `axio` CLI.
+```
+%LOCALAPPDATA%\Programs\AXIO Stitching Studio\
+    AXIO_Stitching_Studio.exe    - the GUI (windowed)
+    AXIO_Stitching_MCP.exe       - MCP server (--mcp-serve) + axio CLI (--cli ...)
+    _internal\                   - the payload BOTH executables share (incl. skills/)
+```
 
-The MCP server must be the **console** build. A Windows windowed executable is linked without
-standard handles, so an stdio server started from the GUI binary has nothing to read or write
-and the agent platform sees a dead tool provider. Agent hosts launch it as a subprocess with
-redirected pipes, so no window appears.
+- **One payload, two executables.** The previous two one-file EXEs each carried a private
+  ~318 MB copy of the same payload — and one-file self-extracts it to temp on *every*
+  launch, giving the MCP server a 10–30 s cold start each time an agent host spawned it.
+  The one-dir bundle starts in ~1–2 s.
+- **The MCP server must be the console build.** A Windows windowed executable is linked
+  without standard handles, so an stdio server inside one has nothing to read or write.
+  Agent hosts launch it with redirected pipes, so no console window appears.
+- **Per-user, no UAC** (`PrivilegesRequired=lowest`). Agent configs live in the user
+  profile; an elevated installer would wire the *admin's* `~/.claude` instead of the user's.
+- **Agent setup is a checkbox**, checked by default: it simply runs
+  `AXIO_Stitching_MCP.exe --cli agent install` — the same audited auto-detecting mechanism
+  documented above, which skips platforms that aren't installed. Re-run it any time.
+- **Uninstall deregisters first**: the uninstaller runs `--cli agent uninstall`
+  (hash-verified; user-edited entries are kept) *before* removing files, so no platform
+  config is left pointing at a deleted executable.
 
-`axio agent install` from a packaged build registers `AXIO_Stitching_MCP.exe --mcp-serve` and
-bakes `AXIO_Stitching_Studio.exe` as `AXIO_STITCHING_APP`.
+From an installed copy, `agent install` registers `AXIO_Stitching_MCP.exe --mcp-serve` as
+the server command and bakes `AXIO_Stitching_Studio.exe` as `AXIO_STITCHING_APP`.
 
 ---
 

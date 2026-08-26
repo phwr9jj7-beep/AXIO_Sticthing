@@ -130,13 +130,16 @@ def find_app_path() -> str | None:
 
     repo_root = Path(__file__).resolve().parent.parent
     candidates = [
+        # One-dir bundle (the current spec: shared _internal, two executables).
+        repo_root / "dist" / "AXIO_Stitching_Studio" / "AXIO_Stitching_Studio.exe",
+        # Legacy one-file build.
         repo_root / "dist" / "AXIO_Stitching_Studio.exe",
-        repo_root / "dist" / "AXIO_Stitching_Studio",
+        # Source checkout.
         repo_root / "scripts" / "axio_launcher.py",
         repo_root / "scripts" / "gui_stitch.py",
     ]
     for candidate in candidates:
-        if candidate.exists():
+        if candidate.is_file():
             return str(candidate)
     return None
 
