@@ -1,0 +1,42 @@
+# CI — run the test suite on every push/PR to main, on both OS families.
+#
+# The suite (353 tests) is deliberately OS-portable: platform-specific branches are
+# exercised through injected pure-path modules, so Windows path logic is verified on the
+# Ubuntu runner too. Heavy optional packages (BaSiCPy/JAX, PySide6, OpenCV, torch) are
+# INTENTIONALLY not installed: no test imports them — they gate whole algorithms at run
+# time and the doctor/validate tests treat their absence as the reportable condition it is.
+# Keeping them out keeps CI fast and immune to their installation flakiness.
+
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package + test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[mcp,metrics]" pytest
+
+      - name: Run tests
+        run: pytest -q

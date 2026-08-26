@@ -1,0 +1,70 @@
+# Release — build the fused Windows installer and publish it as a GitHub Release.
+#
+# Triggered by pushing a version tag (v1.1.0, v2.0.0, ...); also manually dispatchable so a
+# flaky dependency install (BaSiCPy pulls JAX, whose Windows wheels occasionally misbehave)
+# never blocks a release — the fallback is building locally with the same
+# `scripts/build_installer.py` and uploading by hand.
+#
+# The build pipeline is exactly the local one: PyInstaller compiles the shared one-directory
+# bundle (two executables over one _internal payload), a sanity check confirms both EXEs and
+# the bundled agent skills are present, then Inno Setup compiles the per-user installer with
+# the version read from the package — so the artifact can never drift from the tag's code.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install full runtime + build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]" pyinstaller
+
+      - name: Install Inno Setup 6
+        run: choco install innosetup --no-progress -y
+
+      - name: Build bundle + installer
+        run: python scripts/build_installer.py
+
+      - name: Run the test suite against the release code
+        run: |
+          pip install pytest
+          pytest -q
+
+      - name: Smoke-test the frozen CLI
+        run: |
+          & "dist/AXIO_Stitching_Studio/AXIO_Stitching_MCP.exe" --cli version --json
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: dist/AXIO_Stitching_Studio_*_Setup.exe
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/AXIO_Stitching_Studio_*_Setup.exe
+          generate_release_notes: true
