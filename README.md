@@ -93,6 +93,14 @@ detected on your machine:
 3. Launch **AXIO Stitching Studio** from the Start menu. Restart any open agent apps once so
    they pick up the new MCP server.
 
+> **Windows SmartScreen note:** the installer is not code-signed, so on first run Windows
+> may show *"Windows protected your PC"*. Click **More info → Run anyway** to proceed. To
+> verify what you downloaded, compare the file's SHA-256
+> (`Get-FileHash AXIO_Stitching_Studio_<version>_Setup.exe` in PowerShell) against the
+> `SHA256SUMS.txt` attached to the same release — every release artifact is built from
+> its git tag by the public [CI workflow](.github/workflows/release.yml), so its
+> provenance is auditable.
+
 Uninstalling cleanly deregisters the agent integration before removing files. To rebuild the
 installer from source: `python scripts/build_installer.py` (needs PyInstaller + Inno Setup 6).
 
