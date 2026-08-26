@@ -6,7 +6,24 @@ This document contains the official architectural specification, API mappings, a
 
 ## 🏗️ 1. Architecture Overview
 
-The desktop application wraps the heavy scientific AXIO microscopy stitching pipeline into a native, responsive, and standalone interface using PySide6 (Qt) and a decoupled subprocess execution architecture.
+The stitching pipeline lives in the `axio_stitching` package (`StitchingEngine` plus the
+vendor-neutral input layer `tile_sources`), and THREE surfaces drive that one engine so every
+route produces identical results:
+
+1. the **desktop GUI** (PySide6, this section),
+2. the **`axio` CLI** (`axio doctor/inspect/estimate/validate/stitch/qc/outputs/serve/agent`),
+3. the **MCP server** (`axio_stitching.mcp_server`, 17 typed tools for AI agents — see
+   `docs/AGENT_INTEGRATION.md` for the tool list, agent-platform installer, and safety contract).
+
+Inputs are auto-detected and no longer Zeiss-only: Zeiss `_info.xml`/`_meta.xml`, Fiji
+`TileConfiguration.txt`, OME-TIFF stage positions, an explicit positions list, or a
+grid-encoded tile folder.
+
+The desktop application wraps the pipeline into a native, responsive, standalone interface
+using PySide6 (Qt) and a decoupled subprocess execution architecture. When launched by an AI
+agent (via the `axio_launch_gui` MCP tool), it adopts the agent's context at startup —
+dataset, output directory, parameters, and the newest stitched preview — via the
+`AXIO_STITCHING_*` environment variables.
 
 ```mermaid
 graph TD
@@ -30,11 +47,14 @@ To ensure that memory-heavy calculations (e.g., PyTorch-dct, BaSiCPy flatfield c
 ## 🔌 2. API & Command Line Interface
 
 ### `gui_runner.py` Arguments
+
+`gui_runner.py` is a thin compatibility shim over `axio_stitching.StitchingEngine`; the same
+parameters are exposed by `axio stitch` (as `--source`/`--xml` etc.) and by the MCP run tools.
 | Argument | Type | Default | Choices | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `--xml` | string | *Required* | — | Absolute path to Zeiss `_info.xml` or `_meta.xml` metadata file. |
 | `--out-dir` | string | *Required* | — | Directory where output stitched `.tif` files and logs are saved. |
-| `--correction` | string | `basicpy` | `basicpy`, `none` | Shading correction method to run before stitching. |
+| `--correction` | string | `basicpy` | `basicpy`, `median`, `spatial`, `none` | Shading correction method to run before stitching. |
 | `--algorithm` | string | `phase` | `phase`, `coordinate`, `sift` | Stitching alignment algorithm. |
 | `--scene` | integer | `None` | — | Restricts processing to a single scene index (0-indexed). |
 | `--ref-channel`| integer | `0` | — | Reference channel index for multi-page TIFF stacks. |
