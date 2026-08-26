@@ -81,8 +81,14 @@ class TestValidateCommand:
 
 class TestStitchHelp:
     def test_stitch_help_exits_zero(self):
-        result = runner.invoke(app, ["stitch", "--help"])
+        # Wide, colourless terminal: rich renders help with ANSI codes and width-dependent
+        # truncation on CI consoles, which can split or elide the literal option strings.
+        result = runner.invoke(
+            app, ["stitch", "--help"],
+            env={"COLUMNS": "200", "NO_COLOR": "1", "TERM": "dumb"},
+        )
         assert result.exit_code == 0
+        assert "--source" in result.output
         assert "--xml" in result.output
         assert "--algorithm" in result.output
 

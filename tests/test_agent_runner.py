@@ -49,10 +49,21 @@ def home(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def ctx(home: Path):
+    """
+    A HOST-NATIVE context: the runner does real filesystem I/O, so its platform must match
+    the OS running the tests (backslash-joined plan paths are literal filename characters on
+    POSIX). Windows path COMPUTATION is covered cross-OS by test_agent_integration's injected
+    pure-path contexts; CLAUDE_DESKTOP_CONFIG pins the desktop config to one sandbox path so
+    these behavioural tests are identical on every OS.
+    """
+    import sys
     return make_ctx(
         home=str(home),
-        env={"APPDATA": str(home / "AppData" / "Roaming")},
-        platform="win32",
+        env={
+            "APPDATA": str(home / "AppData" / "Roaming"),
+            "CLAUDE_DESKTOP_CONFIG": str(home / "AppData" / "Roaming" / "Claude" / "claude_desktop_config.json"),
+        },
+        platform=sys.platform,
         exec_path=r"C:\proj\.venv\Scripts\python.exe",
         exec_args=("-m", "axio_stitching.mcp_server"),
         app_path=r"C:\proj\dist\AXIO_Stitching_Studio.exe",
@@ -70,7 +81,7 @@ class TestDetection:
         assert any(str(home / ".claude") in e for e in evidence)
 
     def test_reports_absence_for_a_missing_root(self, tmp_path: Path):
-        empty = make_ctx(home=str(tmp_path / "nothing"), env={}, platform="win32")
+        empty = make_ctx(home=str(tmp_path / "nothing"), env={})
         assert not detect_target("codex", empty).installed
 
     def test_an_unknown_target_is_rejected(self, ctx):
@@ -138,7 +149,7 @@ class TestInstall:
     def test_skips_an_undetected_platform_rather_than_creating_its_config(self, tmp_path: Path):
         home = tmp_path / "bare"
         (home / ".claude").mkdir(parents=True)
-        bare = make_ctx(home=str(home), env={}, platform="win32")
+        bare = make_ctx(home=str(home), env={})
         results = {r.target: r for r in install_all(bare)}
         assert results["claude-code"].changed
         assert results["codex"].skipped
@@ -147,7 +158,7 @@ class TestInstall:
     def test_an_explicit_target_installs_even_when_undetected(self, tmp_path: Path):
         home = tmp_path / "bare"
         home.mkdir()
-        bare = make_ctx(home=str(home), env={}, platform="win32")
+        bare = make_ctx(home=str(home), env={})
         assert install_all(bare, targets=["codex"])[0].ok
         assert (home / ".codex" / "config.toml").exists()
 
