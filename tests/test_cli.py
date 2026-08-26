@@ -53,9 +53,12 @@ class TestInspectCommand:
 
 class TestValidateCommand:
     def test_validate_valid_config(self, info_xml_path, tmp_path):
+        # correction=median: needs no optional package, so this asserts "a valid config
+        # validates" rather than "basicpy happens to be installed on this machine".
         result = runner.invoke(app, [
             "validate", "--xml", str(info_xml_path),
             "--out-dir", str(tmp_path / "output"),
+            "--correction", "median",
             "--json",
         ])
         assert result.exit_code == 0, result.output
