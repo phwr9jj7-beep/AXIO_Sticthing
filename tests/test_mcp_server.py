@@ -400,3 +400,90 @@ class TestNonZeissSources:
         payload = call_json(mcp_server.axio_stitch_sync, source=str(d), out_dir=str(tmp_path / "z"))
         assert payload["success"] is False
         assert "grid" in payload["error_message"].lower() or "recognisable" in payload["error_message"].lower()
+
+
+class TestChannelAndZRecognition:
+    """
+    Multi-color and Z-stack datasets come in two shapes each: inside the tile file
+    (multi-page) or as separate files (filename tags). A metadata file typically names only
+    the reference set, so the sample tile alone under-reports the dataset — an agent that
+    trusted it would silently stitch one channel, 2D. inspect must therefore name BOTH
+    representations and say which parameters to pass.
+    """
+
+    def _zeiss(self, d: Path, names_xy) -> Path:
+        import xml.etree.ElementTree as ET
+        root = ET.Element("ZoomImageDocument")
+        for fn, x, y in names_xy:
+            im = ET.SubElement(root, "Image")
+            ET.SubElement(im, "Filename").text = fn
+            b = ET.SubElement(im, "Bounds")
+            for k, v in dict(StartX=x, StartY=y, SizeX=200, SizeY=200, StartS=0).items():
+                b.set(k, str(v))
+        xml = d / "scan_info.xml"
+        ET.ElementTree(root).write(str(xml))
+        return xml
+
+    def _geometry(self, xml: Path) -> dict:
+        return call_json(mcp_server.axio_inspect_dataset, source=str(xml))["tile_geometry"]
+
+    def test_multipage_channels_recognized(self, tmp_path: Path):
+        import numpy as np, tifffile
+        d = tmp_path / "mpc"; d.mkdir()
+        for i, (x, y) in enumerate([(0, 0), (180, 0)], 1):
+            tifffile.imwrite(str(d / f"t_s1m{i}_ORG.tif"),
+                             np.zeros((3, 200, 200), dtype="uint16"),
+                             metadata={"axes": "CYX"}, imagej=True)
+        g = self._geometry(self._zeiss(d, [(f"t_s1m{i}_ORG.tif", x, y) for i, (x, y) in enumerate([(0, 0), (180, 0)], 1)]))
+        assert g["layout"] == "multi-page" and g["channels_per_file"] == 3
+        assert any("ref_channel" in r for r in g["recommendations"])
+
+    def test_split_channel_tags_recognized_with_exact_parameters(self, tmp_path: Path):
+        import numpy as np, tifffile
+        d = tmp_path / "spc"; d.mkdir()
+        for i, (x, y) in enumerate([(0, 0), (180, 0)], 1):
+            for c in (1, 2, 3):
+                tifffile.imwrite(str(d / f"t_c{c}_s1m{i}_ORG.tif"), np.zeros((200, 200), dtype="uint16"))
+        g = self._geometry(self._zeiss(d, [(f"t_c1_s1m{i}_ORG.tif", x, y) for i, (x, y) in enumerate([(0, 0), (180, 0)], 1)]))
+        assert g["layout"] == "split-channel"
+        assert g["split_channel_tags"] == ["_c1_", "_c2_", "_c3_"]
+        assert any("ref_tag='_c1_'" in r and "target_tags='_c2_,_c3_'" in r for r in g["recommendations"])
+
+    def test_multipage_z_recognized(self, tmp_path: Path):
+        import numpy as np, tifffile
+        d = tmp_path / "mpz"; d.mkdir()
+        for i, (x, y) in enumerate([(0, 0), (180, 0)], 1):
+            tifffile.imwrite(str(d / f"t_s1m{i}_ORG.tif"),
+                             np.zeros((5, 200, 200), dtype="uint16"),
+                             metadata={"axes": "ZYX"}, imagej=True)
+        g = self._geometry(self._zeiss(d, [(f"t_s1m{i}_ORG.tif", x, y) for i, (x, y) in enumerate([(0, 0), (180, 0)], 1)]))
+        assert g["z_per_file"] == 5
+        assert any("z_mode" in r for r in g["recommendations"])
+
+    def test_filename_tag_z_recognized(self, tmp_path: Path):
+        import numpy as np, tifffile
+        d = tmp_path / "fz"; d.mkdir()
+        for i, (x, y) in enumerate([(0, 0), (180, 0)], 1):
+            for z in range(4):
+                tifffile.imwrite(str(d / f"t_z{z:02d}_s1m{i}_ORG.tif"), np.zeros((200, 200), dtype="uint16"))
+        g = self._geometry(self._zeiss(d, [(f"t_z00_s1m{i}_ORG.tif", x, y) for i, (x, y) in enumerate([(0, 0), (180, 0)], 1)]))
+        assert g["z_slices_from_filenames"] == 4
+        assert any("z_mode" in r and "silently" in r for r in g["recommendations"])
+
+    def test_channels_and_z_together(self, tmp_path: Path):
+        import numpy as np, tifffile
+        d = tmp_path / "both"; d.mkdir()
+        for i, (x, y) in enumerate([(0, 0), (180, 0)], 1):
+            for z in range(3):
+                tifffile.imwrite(str(d / f"t_z{z:02d}_s1m{i}_ORG.tif"),
+                                 np.zeros((2, 200, 200), dtype="uint16"),
+                                 metadata={"axes": "CYX"}, imagej=True)
+        g = self._geometry(self._zeiss(d, [(f"t_z00_s1m{i}_ORG.tif", x, y) for i, (x, y) in enumerate([(0, 0), (180, 0)], 1)]))
+        assert g["layout"] == "multi-page" and g["channels_per_file"] == 2
+        assert g["z_slices_from_filenames"] == 3
+        assert len(g["recommendations"]) == 2
+
+    def test_plain_single_channel_gets_no_noise(self, small_dataset: Path):
+        g = self._geometry(small_dataset)
+        assert g["layout"] == "single-channel"
+        assert "recommendations" not in g
