@@ -2,7 +2,7 @@
 mcp_server.py — the AXIO Stitching MCP (Model Context Protocol) server.
 
 Exposes the pipeline's OWN operations as typed MCP tools over stdio, so an external agent
-can inspect, size, run and QC a Zeiss tile-scan stitch while driving exactly the same engine
+can inspect, size, run and QC a tile-scan stitch (Zeiss or vendor-neutral) while driving the same engine
 the desktop app drives. It contains **no LLM code**: it is a tool PROVIDER, not an agent.
 Every tool is a thin wrapper over :mod:`axio_stitching.engine`, :mod:`axio_stitching.estimate`,
 :mod:`axio_stitching.qc` and :mod:`axio_stitching.jobs`, shared with the ``axio`` CLI so the
@@ -67,16 +67,19 @@ except ImportError:  # pragma: no cover - depends on the installed SDK
 
 
 INSTRUCTIONS = """\
-AXIO Stitching Studio - high-throughput stitching for Zeiss Axio tile scans.
+AXIO Stitching Studio - high-throughput microscopy tile stitching (Zeiss AND vendor-neutral).
 
 WORKFLOW (do not skip steps 1-3; each one prevents a failure mode that costs a whole run):
   1. axio_doctor            - confirm the environment. Optional packages gate whole
                               algorithms: basicpy for correction="basicpy", OpenCV for
                               algorithm="sift". They fail at run time, not config time.
-  2. axio_inspect_dataset   - read the XML. It tells you whether the dataset is multi-page
-                              (channels inside each tile; use ref_channel) or split-channel
-                              (one file per channel; use ref_tag + target_tags), how many
-                              scenes there are, and whether there is a Z dimension.
+  2. axio_inspect_dataset   - read the dataset. `source` may be a Zeiss _info.xml/_meta.xml,
+                              a Fiji TileConfiguration.txt, OME-TIFFs with stage positions, a
+                              positions .json, or a DIRECTORY of tiles with grid-encoded
+                              filenames (axio_detect_source classifies it). It reports the
+                              detected source_type, whether tiles are multi-page (use
+                              ref_channel) or split-channel (ref_tag + target_tags), the scene
+                              count, and whether there is a Z dimension.
   3. axio_estimate_stitch   - size the job. These are gigapixel canvases. Act on the
                               verdict: will_not_fit means narrow the job (one scene,
                               z_mode="mip_output_only", fewer target_tags), not "try anyway".
@@ -122,7 +125,7 @@ def _split_tags(raw: str) -> list[str]:
 
 
 def _build_config(
-    xml_path: str,
+    source: str,
     out_dir: str,
     correction: str = "basicpy",
     algorithm: str = "phase",
@@ -133,10 +136,13 @@ def _build_config(
     alignment_mode: str = "reference",
     z_mode: str = "none",
     ref_z_slice: int = 0,
+    overlap: float = 0.1,
+    grid_cols: int | None = None,
+    pixel_size_um: float | None = None,
 ) -> StitchConfig:
     """Validate and normalise the shared parameter set. Raises ValueError with a usable message."""
     return StitchConfig(
-        xml_path=Path(xml_path).expanduser().resolve(),
+        source=Path(source).expanduser().resolve(),
         out_dir=Path(out_dir).expanduser().resolve(),
         correction=correction,
         algorithm=algorithm,
@@ -147,6 +153,9 @@ def _build_config(
         alignment_mode=alignment_mode,
         z_mode=z_mode,
         ref_z_slice=ref_z_slice,
+        overlap=overlap,
+        grid_cols=grid_cols,
+        pixel_size_um=pixel_size_um,
     )
 
 
@@ -238,41 +247,64 @@ def axio_list_algorithms() -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def axio_inspect_dataset(xml_path: str) -> str:
+def axio_inspect_dataset(
+    source: str,
+    overlap: float = 0.1,
+    grid_cols: int | None = None,
+    pixel_size_um: float | None = None,
+) -> str:
     """
-    Parse a Zeiss _info.xml or _meta.xml and return the dataset's structure.
+    Inspect ANY supported tile dataset and return its structure — not just Zeiss.
 
-    Read this BEFORE proposing any stitch: it tells you the scene count, the tiles per scene
-    with their stage coordinates and sizes, the tile pixel dimensions, the channel and
-    Z-slice counts, and the pixel scale in micrometres when the metadata carries it — the
-    facts that decide every parameter. Read-only.
+    Read this BEFORE proposing a stitch. The `source` may be:
+      * a Zeiss _info.xml / _meta.xml,
+      * a Fiji/ImageJ TileConfiguration.txt (positions in pixels),
+      * an OME-TIFF (or a directory of them) carrying Plane PositionX/PositionY stage metadata,
+      * a positions .json ({"tiles":[{"filename","x","y"}], ...}),
+      * or a DIRECTORY of tiles whose filenames encode a grid (x00_y01, r0c1, Position012).
+    The `source_type` field tells you which was detected and `confidence` how sure it is.
+
+    It reports scene count, tiles per scene with positions and sizes, tile pixel dimensions,
+    channel and Z-slice counts, and pixel scale in micrometres when known. Read-only.
 
     Args:
-        xml_path: Absolute path to the Zeiss _info.xml or _meta.xml file. The raw tile TIFFs
-            must sit in the same directory.
+        source: Path to a metadata file, a positions file, an OME-TIFF, or a tile directory.
+        overlap: Tile overlap fraction (0-1), used only when positions are inferred from a
+            filename grid.
+        grid_cols: Column count, needed when filenames carry a linear position index
+            (e.g. Micro-Manager 'Position012') rather than explicit row/col.
+        pixel_size_um: Micrometres per pixel, to convert stage-unit positions (OME/JSON) to
+            pixels when the source omits its own scale.
 
     Returns:
-        JSON with keys: xml_path, xml_type ('info'|'meta'), scenes[{scene_id, tiles[...],
-        total_tiles}], total_scenes, total_tiles, pixel_scale_um, tile_geometry.
+        JSON with keys: source_type ('zeiss'|'fiji'|'ome'|'explicit'|'grid'), confidence,
+        raw_dir, scenes[{scene_id, tiles[...], total_tiles}], total_scenes, total_tiles,
+        pixel_scale_um, tile_geometry, notes, warnings.
     """
     try:
-        config = StitchConfig(xml_path=Path(xml_path).expanduser().resolve(), out_dir=Path.cwd())
+        config = StitchConfig(
+            source=Path(source).expanduser().resolve(),
+            out_dir=Path.cwd(),
+            overlap=overlap,
+            grid_cols=grid_cols,
+            pixel_size_um=pixel_size_um,
+        )
     except Exception as exc:
-        return _error(str(exc), xml_path=xml_path)
+        return _error(str(exc), source=source)
 
     from .engine import StitchingEngine
 
     try:
         metadata = StitchingEngine(config).inspect_metadata()
     except Exception as exc:
-        return _error(f"{type(exc).__name__}: {exc}", xml_path=xml_path)
+        return _error(f"{type(exc).__name__}: {exc}", source=source)
 
-    # Attach real tile geometry — the metadata describes the stage footprint, and only the
-    # file itself knows how many channels and Z-slices each tile actually holds.
+    # Attach real tile geometry — positions describe the layout, and only the file itself
+    # knows how many channels and Z-slices each tile actually holds.
     try:
         from .canvas import detect_tile_axes
 
-        raw_dir = config.xml_path.parent
+        raw_dir = Path(metadata.get("raw_dir", config.source_path))
         sample = None
         for scene in metadata.get("scenes", []):
             for tile in scene.get("tiles", [])[:4]:
@@ -295,8 +327,8 @@ def axio_inspect_dataset(xml_path: str) -> str:
             }
         else:
             metadata["tile_geometry"] = {
-                "error": "no tile file from the metadata was found beside the XML; the raw "
-                         "TIFFs must sit in the same directory as the XML"
+                "error": "no tile file named by the source was found; the raw TIFFs must sit "
+                         "in the tile directory the source points at"
             }
     except Exception as exc:  # noqa: BLE001 - geometry is a bonus, not the payload
         metadata["tile_geometry"] = {"error": f"{type(exc).__name__}: {exc}"}
@@ -305,8 +337,45 @@ def axio_inspect_dataset(xml_path: str) -> str:
 
 
 @mcp.tool()
+def axio_detect_source(source: str) -> str:
+    """
+    Quickly classify a tile dataset's format without fully parsing it.
+
+    Use this when you are unsure what kind of dataset you have been handed. Cheaper than
+    axio_inspect_dataset; call that next for the full structure. Read-only.
+
+    Args:
+        source: Path to a file or a directory of tiles.
+
+    Returns:
+        JSON with keys: source, source_type ('zeiss'|'fiji'|'ome'|'explicit'|'grid'|'unknown'),
+        is_directory, and a human 'explanation' of what to do next.
+    """
+    from .tile_sources import detect_source_type
+
+    path = Path(source).expanduser()
+    kind = detect_source_type(path)
+    explanations = {
+        "zeiss": "Zeiss _info.xml/_meta.xml. Pass it straight to axio_inspect_dataset.",
+        "fiji": "Fiji TileConfiguration.txt (pixel positions). Ready to stitch.",
+        "ome": "OME-TIFF tiles with embedded stage positions. Ready to stitch.",
+        "explicit": "A positions JSON. Ready to stitch.",
+        "grid": "A folder of tiles with grid-encoded filenames. Stitch with phase/sift; pass "
+                "overlap (and grid_cols if filenames carry a linear index).",
+        "unknown": "Not recognised. Provide a Fiji TileConfiguration.txt, OME-TIFFs with stage "
+                   "positions, a Zeiss XML, or an explicit positions list.",
+    }
+    return _json({
+        "source": str(path),
+        "source_type": kind,
+        "is_directory": path.is_dir(),
+        "explanation": explanations.get(kind, explanations["unknown"]),
+    })
+
+
+@mcp.tool()
 def axio_estimate_stitch(
-    xml_path: str,
+    source: str,
     out_dir: str,
     correction: str = "basicpy",
     algorithm: str = "phase",
@@ -317,6 +386,9 @@ def axio_estimate_stitch(
     alignment_mode: str = "reference",
     z_mode: str = "none",
     ref_z_slice: int = 0,
+    overlap: float = 0.1,
+    grid_cols: int | None = None,
+    pixel_size_um: float | None = None,
 ) -> str:
     """
     Size a stitching job BEFORE running it: canvas dimensions, output size, peak RAM,
@@ -331,7 +403,8 @@ def axio_estimate_stitch(
     Read-only; it touches metadata and one sample tile, never the full dataset.
 
     Args:
-        xml_path: Absolute path to the Zeiss _info.xml or _meta.xml.
+        source: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a
+            directory of tiles (see axio_inspect_dataset for the full list).
         out_dir: Intended output directory (its volume's free space is part of the verdict).
         correction: 'basicpy' | 'median' | 'spatial' | 'none'.
         algorithm: 'phase' | 'sift' | 'coordinate'.
@@ -350,8 +423,9 @@ def axio_estimate_stitch(
     """
     try:
         config = _build_config(
-            xml_path, out_dir, correction, algorithm, scene, ref_channel,
+            source, out_dir, correction, algorithm, scene, ref_channel,
             ref_tag, target_tags, alignment_mode, z_mode, ref_z_slice,
+            overlap=overlap, grid_cols=grid_cols, pixel_size_um=pixel_size_um,
         )
     except Exception as exc:
         return _error(str(exc))
@@ -366,12 +440,15 @@ def axio_estimate_stitch(
 
 @mcp.tool()
 def axio_validate_stitch(
-    xml_path: str,
+    source: str,
     out_dir: str,
     correction: str = "basicpy",
     algorithm: str = "phase",
     scene: int | None = None,
     ref_tag: str = "",
+    overlap: float = 0.1,
+    grid_cols: int | None = None,
+    pixel_size_um: float | None = None,
 ) -> str:
     """
     Check a stitching configuration's prerequisites without running anything.
@@ -384,7 +461,8 @@ def axio_validate_stitch(
     partially-copied dataset stitches to a canvas full of holes rather than failing outright.
 
     Args:
-        xml_path: Absolute path to the Zeiss XML.
+        source: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a
+            directory of tiles.
         out_dir: Intended output directory.
         correction: Intended correction method.
         algorithm: Intended registration algorithm.
@@ -396,7 +474,8 @@ def axio_validate_stitch(
     """
     try:
         config = _build_config(
-            xml_path, out_dir, correction, algorithm, scene, ref_tag=ref_tag
+            source, out_dir, correction, algorithm, scene, ref_tag=ref_tag,
+            overlap=overlap, grid_cols=grid_cols, pixel_size_um=pixel_size_um,
         )
     except Exception as exc:
         return _json({"valid": False, "errors": [str(exc)], "warnings": []})
@@ -415,7 +494,7 @@ def axio_validate_stitch(
 
 @mcp.tool()
 def axio_start_stitch(
-    xml_path: str,
+    source: str,
     out_dir: str,
     correction: str = "basicpy",
     algorithm: str = "phase",
@@ -426,6 +505,9 @@ def axio_start_stitch(
     alignment_mode: str = "reference",
     z_mode: str = "none",
     ref_z_slice: int = 0,
+    overlap: float = 0.1,
+    grid_cols: int | None = None,
+    pixel_size_um: float | None = None,
 ) -> str:
     """
     Start the stitching pipeline in the BACKGROUND and return a job id immediately.
@@ -438,7 +520,8 @@ def axio_start_stitch(
     of starting this.
 
     Args:
-        xml_path: Absolute path to the Zeiss _info.xml or _meta.xml.
+        source: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a
+            directory of tiles (see axio_inspect_dataset for the full list).
         out_dir: Directory to write the stitched TIFFs and previews into.
         correction: 'basicpy' | 'median' | 'spatial' | 'none'.
         algorithm: 'phase' | 'sift' | 'coordinate'.
@@ -456,8 +539,9 @@ def axio_start_stitch(
     """
     try:
         config = _build_config(
-            xml_path, out_dir, correction, algorithm, scene, ref_channel,
+            source, out_dir, correction, algorithm, scene, ref_channel,
             ref_tag, target_tags, alignment_mode, z_mode, ref_z_slice,
+            overlap=overlap, grid_cols=grid_cols, pixel_size_um=pixel_size_um,
         )
     except Exception as exc:
         return _error(str(exc))
@@ -563,7 +647,7 @@ def axio_cancel_job(job_id: str) -> str:
 
 @mcp.tool()
 def axio_stitch_sync(
-    xml_path: str,
+    source: str,
     out_dir: str,
     correction: str = "median",
     algorithm: str = "phase",
@@ -574,6 +658,9 @@ def axio_stitch_sync(
     alignment_mode: str = "reference",
     z_mode: str = "none",
     ref_z_slice: int = 0,
+    overlap: float = 0.1,
+    grid_cols: int | None = None,
+    pixel_size_um: float | None = None,
 ) -> str:
     """
     Run the pipeline synchronously and return the finished result.
@@ -584,8 +671,8 @@ def axio_stitch_sync(
     while the work continues in the background where you cannot see it.
 
     Args (identical to axio_start_stitch):
-        xml_path, out_dir, correction, algorithm, scene, ref_channel, ref_tag, target_tags,
-        alignment_mode, z_mode, ref_z_slice.
+        source, out_dir, correction, algorithm, scene, ref_channel, ref_tag, target_tags,
+        alignment_mode, z_mode, ref_z_slice, overlap, grid_cols, pixel_size_um.
 
     Returns:
         JSON with keys: success, output_paths, preview_paths, duration_seconds,
@@ -593,8 +680,9 @@ def axio_stitch_sync(
     """
     try:
         config = _build_config(
-            xml_path, out_dir, correction, algorithm, scene, ref_channel,
+            source, out_dir, correction, algorithm, scene, ref_channel,
             ref_tag, target_tags, alignment_mode, z_mode, ref_z_slice,
+            overlap=overlap, grid_cols=grid_cols, pixel_size_um=pixel_size_um,
         )
     except Exception as exc:
         return _json({"success": False, "error_message": str(exc)})
@@ -701,7 +789,7 @@ def axio_list_outputs(directory: str) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def axio_launch_gui(out_dir: str = "", xml_path: str = "") -> str:
+def axio_launch_gui(out_dir: str = "", source: str = "") -> str:
     """
     Open AXIO Stitching Studio so the user can view a mosaic at full resolution and re-run
     with adjusted parameters.
@@ -712,7 +800,7 @@ def axio_launch_gui(out_dir: str = "", xml_path: str = "") -> str:
 
     Args:
         out_dir: Output directory to pre-fill in the app.
-        xml_path: Dataset XML to pre-fill in the app.
+        source: Dataset (Zeiss XML or tile directory) to pre-fill in the app.
 
     Returns:
         JSON with keys: launched (bool), app_path, pid, reason, tried.
@@ -740,8 +828,8 @@ def axio_launch_gui(out_dir: str = "", xml_path: str = "") -> str:
     env = dict(os.environ)
     if out_dir:
         env["AXIO_STITCHING_OUT_DIR"] = str(Path(out_dir).expanduser())
-    if xml_path:
-        env["AXIO_STITCHING_XML"] = str(Path(xml_path).expanduser())
+    if source:
+        env["AXIO_STITCHING_XML"] = str(Path(source).expanduser())
 
     # Detach: the GUI is for the human and must outlive this server process, which the agent
     # host will kill as soon as the conversation ends.

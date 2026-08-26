@@ -38,6 +38,7 @@ from .models import (
 )
 from .parsers import parse_zeiss_xml, parse_zeiss_xml_to_models
 from .stitchers import compute_alignment
+from .tile_sources import ResolvedSource, TileSourceError, resolve_tiles
 
 
 class StitchingEngine:
@@ -68,7 +69,7 @@ class StitchingEngine:
         cfg = self.config
 
         self._emit(1, "Starting stitching runner...", PipelineStage.INIT)
-        self._emit(1, f"XML Metadata Path: {cfg.xml_path}", PipelineStage.INIT)
+        self._emit(1, f"Dataset Source    : {cfg.source_path}", PipelineStage.INIT)
         self._emit(1, f"Output Directory  : {cfg.out_dir}", PipelineStage.INIT)
         self._emit(1, f"Correction        : {cfg.correction.value}", PipelineStage.INIT)
         self._emit(1, f"Algorithm         : {cfg.algorithm.value}", PipelineStage.INIT)
@@ -81,12 +82,17 @@ class StitchingEngine:
         self._emit(1, f"Reference Z Slice : {cfg.ref_z_slice}", PipelineStage.INIT)
 
         cfg.out_dir.mkdir(parents=True, exist_ok=True)
-        raw_dir = cfg.xml_path.parent
 
         try:
-            # ----- Step 1: Parse XML -------------------------------------------
-            self._emit(2, "Parsing Zeiss XML metadata...", PipelineStage.PARSING)
-            scenes_raw, xml_type, _ = parse_zeiss_xml(cfg.xml_path)
+            # ----- Step 1: Resolve tile positions (any supported source) --------
+            self._emit(2, "Resolving tile positions...", PipelineStage.PARSING)
+            try:
+                resolved = self._resolve_source()
+            except TileSourceError as exc:
+                return StitchResult(success=False, error_message=str(exc))
+
+            scenes_raw = resolved.scenes
+            raw_dir = resolved.raw_dir
 
             if not scenes_raw:
                 return StitchResult(
@@ -94,7 +100,16 @@ class StitchingEngine:
                     error_message="No tiles or scene grid geometry could be extracted.",
                 )
 
-            self._emit(5, f"Extracted {len(scenes_raw)} scenes to stitch.", PipelineStage.PARSING)
+            self._emit(
+                5,
+                f"Source '{resolved.source_type}' ({resolved.confidence} confidence): "
+                f"{len(scenes_raw)} scene(s), {resolved.total_tiles} tiles.",
+                PipelineStage.PARSING,
+            )
+            for note in resolved.notes:
+                self._emit(5, f"  {note}", PipelineStage.PARSING)
+            for warning in resolved.warnings:
+                self._emit(5, f"  [warning] {warning}", PipelineStage.PARSING)
 
             target_scenes = (
                 [cfg.scene] if cfg.scene is not None else sorted(scenes_raw.keys())
@@ -227,16 +242,47 @@ class StitchingEngine:
                 duration_seconds=time.time() - start,
             )
 
-    def inspect_metadata(self) -> dict:
-        """Parse XML and return scene/tile metadata without running stitching."""
-        scene_list, xml_type, pixel_scale_um = parse_zeiss_xml_to_models(self.config.xml_path)
-        result = InspectResult(
-            xml_path=str(self.config.xml_path),
-            xml_type=xml_type,
-            scenes=scene_list,
-            pixel_scale_um=pixel_scale_um,
+    def _resolve_source(self) -> ResolvedSource:
+        """Resolve tile positions from the configured source (any supported format)."""
+        cfg = self.config
+        return resolve_tiles(
+            cfg.source_path,
+            positions=cfg.positions,
+            overlap=cfg.overlap,
+            grid_cols=cfg.grid_cols,
+            serpentine=cfg.serpentine,
+            tile_size=cfg.tile_size,
+            pixel_size_um=cfg.pixel_size_um,
         )
-        return result.to_dict()
+
+    def inspect_metadata(self) -> dict:
+        """Resolve the source and return scene/tile metadata without running stitching."""
+        from .models import SceneInfo, TileInfo
+
+        resolved = self._resolve_source()
+        scene_list = [
+            SceneInfo(
+                scene_id=sid,
+                tiles=[
+                    TileInfo(filename=t["filename"], x=t["x"], y=t["y"], w=t["w"], h=t["h"])
+                    for t in tiles
+                ],
+            )
+            for sid, tiles in sorted(resolved.scenes.items())
+        ]
+        result = InspectResult(
+            xml_path=str(self.config.source_path),
+            xml_type=resolved.source_type,
+            scenes=scene_list,
+            pixel_scale_um=resolved.pixel_scale_um,
+        )
+        payload = result.to_dict()
+        payload["source_type"] = resolved.source_type
+        payload["confidence"] = resolved.confidence
+        payload["raw_dir"] = str(resolved.raw_dir)
+        payload["notes"] = resolved.notes
+        payload["warnings"] = resolved.warnings
+        return payload
 
     def validate_config(self) -> dict:
         """Validate configuration without running the pipeline. Returns ValidationResult dict."""
@@ -244,9 +290,9 @@ class StitchingEngine:
         errors: list[str] = []
         warnings: list[str] = []
 
-        # XML
-        if not cfg.xml_path.exists():
-            errors.append(f"XML file does not exist: {cfg.xml_path}")
+        # Source
+        if not cfg.source_path.exists():
+            errors.append(f"source does not exist: {cfg.source_path}")
 
         # Output directory writability
         try:
@@ -270,24 +316,28 @@ class StitchingEngine:
             except ImportError:
                 errors.append("OpenCV not installed for SIFT. Run: pip install opencv-python")
 
-        # Tile existence check (sample only)
-        if cfg.xml_path.exists():
+        # Source resolution + tile existence check (sample only)
+        if cfg.source_path.exists():
             try:
-                scenes_raw, _, _ = parse_zeiss_xml(cfg.xml_path)
+                resolved = self._resolve_source()
+                scenes_raw = resolved.scenes
+                warnings.extend(resolved.warnings)
                 if not scenes_raw:
-                    errors.append("No scenes found in XML file.")
+                    errors.append("No scenes could be resolved from the source.")
                 else:
-                    raw_dir = cfg.xml_path.parent
+                    raw_dir = resolved.raw_dir
                     first_scene = next(iter(scenes_raw.values()))
                     missing = sum(1 for t in first_scene if not (raw_dir / t["filename"]).exists())
                     if missing > 0:
                         warnings.append(
-                            f"{missing}/{len(first_scene)} tile files missing in raw data directory."
+                            f"{missing}/{len(first_scene)} tile files missing in the tile directory."
                         )
                     if cfg.scene is not None and cfg.scene not in scenes_raw:
                         errors.append(f"Scene {cfg.scene} not found. Available: {sorted(scenes_raw.keys())}")
-            except Exception as e:
-                errors.append(f"XML parse error: {e}")
+            except TileSourceError as e:
+                errors.append(str(e))
+            except Exception as e:  # noqa: BLE001 - report any resolver failure as a config error
+                errors.append(f"source resolution error: {e}")
 
         return ValidationResult(
             valid=len(errors) == 0,

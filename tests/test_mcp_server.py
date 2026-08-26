@@ -101,7 +101,7 @@ class TestVocabularyTools:
 
 class TestInspect:
     def test_reports_scenes_tiles_and_real_tile_geometry(self, small_dataset: Path):
-        payload = call_json(mcp_server.axio_inspect_dataset, xml_path=str(small_dataset))
+        payload = call_json(mcp_server.axio_inspect_dataset, source=str(small_dataset))
         assert payload["total_scenes"] == 1
         assert payload["total_tiles"] == 4
         geometry = payload["tile_geometry"]
@@ -109,11 +109,11 @@ class TestInspect:
         assert geometry["channels_per_file"] == 1
 
     def test_says_so_when_the_tiles_are_not_beside_the_xml(self, info_xml_path: Path):
-        payload = call_json(mcp_server.axio_inspect_dataset, xml_path=str(info_xml_path))
+        payload = call_json(mcp_server.axio_inspect_dataset, source=str(info_xml_path))
         assert "error" in payload["tile_geometry"]
 
     def test_a_missing_file_returns_an_error_not_an_exception(self, tmp_path: Path):
-        payload = call_json(mcp_server.axio_inspect_dataset, xml_path=str(tmp_path / "nope.xml"))
+        payload = call_json(mcp_server.axio_inspect_dataset, source=str(tmp_path / "nope.xml"))
         assert payload["ok"] is False and payload["error"]
 
 
@@ -121,7 +121,7 @@ class TestEstimateAndValidate:
     def test_estimate_returns_a_verdict(self, small_dataset: Path, tmp_path: Path):
         payload = call_json(
             mcp_server.axio_estimate_stitch,
-            xml_path=str(small_dataset), out_dir=str(tmp_path / "out"), correction="none",
+            source=str(small_dataset), out_dir=str(tmp_path / "out"), correction="none",
         )
         assert payload["verdict"] in {"ok", "tight", "will_not_fit"}
         assert payload["totals"]["peak_ram_bytes"] > 0
@@ -129,14 +129,14 @@ class TestEstimateAndValidate:
     def test_estimate_rejects_an_illegal_value_with_a_message(self, small_dataset: Path, tmp_path: Path):
         payload = call_json(
             mcp_server.axio_estimate_stitch,
-            xml_path=str(small_dataset), out_dir=str(tmp_path / "out"), correction="magic",
+            source=str(small_dataset), out_dir=str(tmp_path / "out"), correction="magic",
         )
         assert payload["ok"] is False and "magic" in payload["error"]
 
     def test_validate_passes_a_good_config(self, small_dataset: Path, tmp_path: Path):
         payload = call_json(
             mcp_server.axio_validate_stitch,
-            xml_path=str(small_dataset), out_dir=str(tmp_path / "out"),
+            source=str(small_dataset), out_dir=str(tmp_path / "out"),
             correction="none", algorithm="phase",
         )
         assert payload["valid"] is True and payload["errors"] == []
@@ -144,7 +144,7 @@ class TestEstimateAndValidate:
     def test_validate_flags_a_scene_that_does_not_exist(self, small_dataset: Path, tmp_path: Path):
         payload = call_json(
             mcp_server.axio_validate_stitch,
-            xml_path=str(small_dataset), out_dir=str(tmp_path / "out"),
+            source=str(small_dataset), out_dir=str(tmp_path / "out"),
             correction="none", algorithm="phase", scene=42,
         )
         assert payload["valid"] is False
@@ -153,7 +153,7 @@ class TestEstimateAndValidate:
     def test_validate_warns_about_missing_tiles(self, info_xml_path: Path, tmp_path: Path):
         payload = call_json(
             mcp_server.axio_validate_stitch,
-            xml_path=str(info_xml_path), out_dir=str(tmp_path / "out"),
+            source=str(info_xml_path), out_dir=str(tmp_path / "out"),
             correction="none", algorithm="phase",
         )
         assert any("missing" in w for w in payload["warnings"])
@@ -165,7 +165,7 @@ class TestStitchAndInspectResult:
         """Run one real stitch; the tools that consume its output are tested against it."""
         payload = call_json(
             mcp_server.axio_stitch_sync,
-            xml_path=str(small_dataset), out_dir=str(tmp_path / "synced"),
+            source=str(small_dataset), out_dir=str(tmp_path / "synced"),
             correction="none", algorithm="coordinate", scene=0,
         )
         assert payload["success"], payload.get("error_message")
@@ -206,7 +206,7 @@ class TestStitchAndInspectResult:
     def test_sync_stitch_reports_a_bad_config_as_a_failed_result(self, tmp_path: Path):
         payload = call_json(
             mcp_server.axio_stitch_sync,
-            xml_path=str(tmp_path / "nope.xml"), out_dir=str(tmp_path / "out"),
+            source=str(tmp_path / "nope.xml"), out_dir=str(tmp_path / "out"),
         )
         assert payload["success"] is False and payload["error_message"]
 
@@ -215,7 +215,7 @@ class TestJobTools:
     def test_start_poll_and_collect(self, small_dataset: Path, tmp_path: Path):
         started = call_json(
             mcp_server.axio_start_stitch,
-            xml_path=str(small_dataset), out_dir=str(tmp_path / "bg"),
+            source=str(small_dataset), out_dir=str(tmp_path / "bg"),
             correction="none", algorithm="coordinate", scene=0,
         )
         job_id = started["job_id"]
@@ -244,7 +244,7 @@ class TestJobTools:
     def test_start_rejects_an_illegal_value(self, small_dataset: Path, tmp_path: Path):
         payload = call_json(
             mcp_server.axio_start_stitch,
-            xml_path=str(small_dataset), out_dir=str(tmp_path / "bg"), algorithm="telepathy",
+            source=str(small_dataset), out_dir=str(tmp_path / "bg"), algorithm="telepathy",
         )
         assert payload["ok"] is False
 
@@ -277,7 +277,7 @@ class TestStdoutIsReservedForTheProtocol:
     def test_a_full_stitch_writes_nothing_to_stdout(self, small_dataset: Path, tmp_path: Path, capsys):
         payload = call_json(
             mcp_server.axio_stitch_sync,
-            xml_path=str(small_dataset), out_dir=str(tmp_path / "quiet"),
+            source=str(small_dataset), out_dir=str(tmp_path / "quiet"),
             correction="none", algorithm="coordinate", scene=0,
         )
         assert payload["success"], payload.get("error_message")
@@ -301,3 +301,102 @@ class TestStdoutIsReservedForTheProtocol:
         captured = capsys.readouterr()
         assert captured.out == ""
         assert captured.err.count("diagnostic line") == 3
+
+
+class TestNonZeissSources:
+    """
+    The headline capability: the agent can stitch datasets that are NOT Zeiss. These drive
+    the real MCP tools end-to-end against a Fiji TileConfiguration and an OME-TIFF folder.
+    """
+
+    def _fiji_dataset(self, tmp_path: Path) -> Path:
+        import numpy as np, tifffile
+        d = tmp_path / "fiji_ds"; d.mkdir()
+        rng = np.random.default_rng(3)
+        for name in ("t00.tif", "t10.tif", "t01.tif", "t11.tif"):
+            tifffile.imwrite(str(d / name), (rng.random((300, 300)) * 8000 + 500).astype("uint16"))
+        (d / "TileConfiguration.txt").write_text(
+            "dim = 2\n"
+            "t00.tif; ; (0.0, 0.0)\n"
+            "t10.tif; ; (270.0, 0.0)\n"
+            "t01.tif; ; (0.0, 270.0)\n"
+            "t11.tif; ; (270.0, 270.0)\n",
+            encoding="utf-8",
+        )
+        return d
+
+    def test_detect_source_classifies_a_fiji_folder(self, tmp_path):
+        d = self._fiji_dataset(tmp_path)
+        payload = call_json(mcp_server.axio_detect_source, source=str(d))
+        assert payload["source_type"] == "fiji"
+        assert payload["is_directory"] is True
+
+    def test_inspect_reports_source_type(self, tmp_path):
+        d = self._fiji_dataset(tmp_path)
+        payload = call_json(mcp_server.axio_inspect_dataset, source=str(d))
+        assert payload["source_type"] == "fiji"
+        assert payload["total_tiles"] == 4
+        assert payload["tile_geometry"]["tile_width"] == 300
+
+    def test_estimate_works_on_a_fiji_folder(self, tmp_path):
+        d = self._fiji_dataset(tmp_path)
+        payload = call_json(
+            mcp_server.axio_estimate_stitch, source=str(d), out_dir=str(tmp_path / "o"),
+            correction="none",
+        )
+        assert payload["verdict"] in {"ok", "tight", "will_not_fit"}
+        assert payload["scenes"][0]["tiles"] == 4
+
+    def test_full_stitch_from_a_fiji_config(self, tmp_path):
+        d = self._fiji_dataset(tmp_path)
+        out = tmp_path / "fiji_out"
+        payload = call_json(
+            mcp_server.axio_stitch_sync, source=str(d), out_dir=str(out),
+            correction="none", algorithm="coordinate",
+        )
+        assert payload["success"], payload.get("error_message")
+        assert payload["tiles_processed"] == 4
+        assert Path(payload["output_paths"][0]).exists()
+
+    def test_full_stitch_from_ome_positions(self, tmp_path):
+        import numpy as np, tifffile
+        d = tmp_path / "ome_ds"; d.mkdir()
+        rng = np.random.default_rng(5)
+        for name, pos in [("a.ome.tif", (0.0, 0.0)), ("b.ome.tif", (135.0, 0.0)),
+                          ("c.ome.tif", (0.0, 135.0)), ("d.ome.tif", (135.0, 135.0))]:
+            tifffile.imwrite(
+                str(d / name), (rng.random((300, 300)) * 8000 + 500).astype("uint16"),
+                metadata={"axes": "YX", "PhysicalSizeX": 0.5, "PhysicalSizeXUnit": "µm",
+                          "Plane": {"PositionX": pos[0], "PositionY": pos[1],
+                                    "PositionXUnit": "µm", "PositionYUnit": "µm"}},
+            )
+        payload = call_json(
+            mcp_server.axio_stitch_sync, source=str(d), out_dir=str(tmp_path / "ome_out"),
+            correction="none", algorithm="coordinate",
+        )
+        assert payload["success"], payload.get("error_message")
+        assert payload["tiles_processed"] == 4
+
+    def test_full_stitch_from_filename_grid(self, tmp_path):
+        import numpy as np, tifffile
+        d = tmp_path / "grid_ds"; d.mkdir()
+        rng = np.random.default_rng(9)
+        for col in range(2):
+            for row in range(2):
+                tifffile.imwrite(str(d / f"scan_x{col}_y{row}.tif"),
+                                 (rng.random((300, 300)) * 8000 + 500).astype("uint16"))
+        payload = call_json(
+            mcp_server.axio_stitch_sync, source=str(d), out_dir=str(tmp_path / "grid_out"),
+            correction="none", algorithm="coordinate", overlap=0.1,
+        )
+        assert payload["success"], payload.get("error_message")
+        assert payload["tiles_processed"] == 4
+
+    def test_unrecognised_folder_fails_cleanly(self, tmp_path):
+        import numpy as np, tifffile
+        d = tmp_path / "opaque"; d.mkdir()
+        for name in ("alpha.tif", "beta.tif"):
+            tifffile.imwrite(str(d / name), np.zeros((10, 10), dtype="uint16"))
+        payload = call_json(mcp_server.axio_stitch_sync, source=str(d), out_dir=str(tmp_path / "z"))
+        assert payload["success"] is False
+        assert "grid" in payload["error_message"].lower() or "recognisable" in payload["error_message"].lower()

@@ -96,10 +96,10 @@ TARGET_LABELS: dict[str, str] = {
 #: decoding assumptions we do not control, and a non-ASCII byte in a file read under a CJK
 #: codepage is a well-known way to break them.
 PLUGIN_DESCRIPTION = (
-    "Drive AXIO Stitching Studio from your agent: inspect Zeiss tile-scan metadata, "
-    "estimate canvas size and memory before committing, run shading correction and tile "
-    "registration, and assemble multi-channel / Z-stack mosaics. Contains no LLM code - "
-    "it is a tool provider."
+    "Drive AXIO Stitching Studio from your agent: inspect tile-scan metadata (Zeiss XML, Fiji "
+    "TileConfiguration, OME-TIFF stage positions, or a grid-encoded tile folder), estimate "
+    "canvas size and memory before committing, run shading correction and tile registration, "
+    "and assemble multi-channel / Z-stack mosaics. Contains no LLM code - it is a tool provider."
 )
 
 
@@ -333,13 +333,15 @@ _REPO_ISM = re.compile(
 )
 
 DEFAULT_SKILL_DESCRIPTION = (
-    "Stitch Zeiss Axio tile-scan microscopy datasets with AXIO Stitching Studio via its MCP "
-    "tools: inspect _info.xml / _meta.xml metadata, estimate canvas size and peak memory "
-    "before committing, apply BaSiCPy / median / spatial shading correction, register tiles "
-    "by phase correlation, SIFT or stage coordinates, and assemble multi-channel, "
-    "split-channel and 3D Z-stack mosaics as ImageJ-compatible TIFFs. Use it for ANY request "
-    "to stitch, mosaic, assemble or flatfield-correct microscope tiles, to read tile-scan "
-    "metadata, or to QC an already-stitched mosaic - never hand-roll a stitching script for that."
+    "Stitch microscopy tile-scan datasets with AXIO Stitching Studio via its MCP tools - "
+    "Zeiss AND vendor-neutral: Zeiss _info.xml / _meta.xml, Fiji/ImageJ TileConfiguration.txt, "
+    "OME-TIFF stage positions, an explicit positions list, or a bare folder of TIFFs with "
+    "grid-encoded filenames. Estimate canvas size and peak memory before committing, apply "
+    "BaSiCPy / median / spatial shading correction, register tiles by phase correlation, SIFT "
+    "or stage coordinates, and assemble multi-channel, split-channel and 3D Z-stack mosaics as "
+    "ImageJ-compatible TIFFs. Use it for ANY request to stitch, mosaic, assemble or "
+    "flatfield-correct microscope tiles, to read tile-scan metadata, or to QC an "
+    "already-stitched mosaic - never hand-roll a stitching script for that."
 )
 
 
@@ -393,12 +395,23 @@ free RAM and free disk on the output volume, and prints exactly what is missing 
 install it. A correction or algorithm whose package is absent fails at run time, not at
 config time — so read this before choosing either.
 
-## 1. Read the dataset
+## 1. Identify and read the dataset (Zeiss OR non-Zeiss)
 
-**`axio_inspect_dataset`** `{{ xml_path }}` — parse a Zeiss `_info.xml` or `_meta.xml` and get
-back the scenes, the tiles per scene with their stage coordinates and sizes, the tile pixel
-dimensions, the channel and Z-slice counts, and the pixel scale in um when the metadata
-carries it.
+The pipeline is **not** Zeiss-only. A `source` may be any of:
+
+| Source | What it is | Positions come from |
+|---|---|---|
+| Zeiss XML | `_info.xml` / `_meta.xml` | stage coordinates / meander grid |
+| Fiji config | `TileConfiguration.txt` (or `.registered.txt`) | pixel positions in the file |
+| OME-TIFF | tiles (or a folder) with `Plane PositionX/PositionY` | embedded stage metadata |
+| positions JSON | `{{ "tiles": [{{ "filename", "x", "y" }}] }}` | you or the user supply them |
+| tile folder | filenames encode a grid (`x00_y01`, `r0c1`, `Position012`) | inferred grid + overlap |
+
+- **`axio_detect_source`** `{{ source }}` — when unsure what you were handed, classify it first
+  (returns `source_type` and what to do next). Cheap; call `axio_inspect_dataset` after.
+- **`axio_inspect_dataset`** `{{ source }}` — the full structure of ANY of the above: the detected
+  `source_type` and `confidence`, the scenes, the tiles per scene with positions and sizes, the
+  tile pixel dimensions, the channel and Z-slice counts, and the pixel scale in um when known.
 
 Read this BEFORE proposing anything: it tells you whether the dataset is **multi-page**
 (channels inside each tile TIFF — use `ref_channel`) or **split-channel** (one file per
@@ -406,9 +419,17 @@ channel, distinguished by a filename tag — use `ref_tag` + `target_tags`), how
 there are, and whether there is a Z dimension at all. Those three facts decide every
 parameter below. **`axio_list_algorithms`** gives you the exact vocabulary of legal values.
 
+**Non-Zeiss inputs — two rules:**
+1. A **filename-grid** folder gives only an *approximate* layout (`confidence: low`), exactly
+   like MIST / m2stitch / ASHLAR before refinement. **Stitch it with `phase` or `sift`, never
+   `coordinate`** — coordinate mode trusts the grid verbatim and leaves seams. Pass `overlap`
+   (default 0.1) and, if filenames carry a linear position index rather than row/col, `grid_cols`.
+2. **OME / positions given in micrometres** need a pixel size to become pixels. If the source
+   omits `PhysicalSizeX`, pass `pixel_size_um`, or the mosaic comes out wrongly scaled.
+
 ## 2. Size the job before committing to it
 
-**`axio_estimate_stitch`** `{{ xml_path, scene, correction, algorithm, z_mode, ... }}` — returns
+**`axio_estimate_stitch`** `{{ source, scene, correction, algorithm, z_mode, ... }}` — returns
 the canvas dimensions in pixels, the output file size, the estimated peak RAM, the
 intermediate footprint of the correction step, a rough wall-clock estimate, and a `verdict`
 of `ok` / `tight` / `will_not_fit` with the reason.
@@ -423,7 +444,7 @@ Act on the verdict rather than reporting it:
 
 ## 3. Validate, then start the job
 
-1. **`axio_validate_stitch`** `{{ xml_path, out_dir, correction, algorithm, ... }}` — checks the
+1. **`axio_validate_stitch`** `{{ source, out_dir, correction, algorithm, ... }}` — checks the
    XML parses and yields scenes, that the tile files named by the metadata actually exist next
    to it, that `out_dir` is writable, and that the packages your chosen `correction` and
    `algorithm` need are importable. Fix every **error**; read every **warning** (missing tiles
@@ -515,9 +536,13 @@ the tool says so — relay that instead of guessing at a path.
 
 ## Scope
 
-Use this skill for Zeiss Axio tile scans and the mosaics it produces. It is **not** for
-registering non-tiled images, for non-Zeiss acquisition formats (use Bio-Formats), or for
-downstream segmentation and analysis of an already-stitched image.
+Use this skill to stitch microscopy **tile scans** — Zeiss and vendor-neutral alike (Fiji
+TileConfiguration, OME-TIFF stage positions, an explicit positions list, or a grid-encoded
+tile folder) — and to QC the mosaics it produces. It is **not** for registering non-tiled
+images, and it reads pixel data as plain TIFF: a proprietary acquisition container that is
+not already TIFF (e.g. `.czi`, `.nd2`, `.lif`) must first be exported to OME-TIFF (via
+Bio-Formats / `bfconvert`) or accompanied by a TileConfiguration or positions list. It does
+not do downstream segmentation or analysis of an already-stitched image.
 """
 
     if _REPO_ISM.search(md):

@@ -55,6 +55,17 @@ app.add_typer(agent_app, name="agent")
 console = Console(stderr=False)
 err_console = Console(stderr=True)
 
+
+def _resolve_source(source: "Path | None", xml: "Path | None") -> Path:
+    """Accept --source (any format) or the legacy --xml alias; exactly one is required."""
+    chosen = source or xml
+    if chosen is None:
+        err_console.print("[bold red]x[/bold red] provide --source (a Zeiss XML, Fiji "
+                          "TileConfiguration, OME-TIFF, positions .json, or a tile directory)")
+        raise typer.Exit(2)
+    return chosen.resolve()
+
+
 _STATUS_STYLE = {
     "ok": "[green]OK[/green]",
     "warn": "[yellow]WARN[/yellow]",
@@ -122,14 +133,16 @@ def doctor(
 
 @app.command()
 def inspect(
-    xml: Path = typer.Option(..., "--xml", help="Zeiss _info.xml or _meta.xml path", show_default=False),
+    source: Optional[Path] = typer.Option(None, "--source", "-s", show_default=False,
+        help="Any dataset: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a tile directory"),
+    xml: Optional[Path] = typer.Option(None, "--xml", help="Alias for --source (Zeiss XML)", show_default=False),
     json_output: bool = typer.Option(False, "--json", help="Output JSON"),
 ) -> None:
     """Parse and display Zeiss XML metadata (scenes, tiles, channels, Z)."""
     from .engine import StitchingEngine
 
     try:
-        config = StitchConfig(xml_path=xml.resolve(), out_dir=Path.cwd())
+        config = StitchConfig(source=_resolve_source(source, xml), out_dir=Path.cwd())
         metadata = StitchingEngine(config).inspect_metadata()
     except Exception as exc:
         if _emit({"error": str(exc)}, json_output):
@@ -164,7 +177,9 @@ def inspect(
 
 @app.command()
 def estimate(
-    xml: Path = typer.Option(..., "--xml", help="Zeiss XML path", show_default=False),
+    source: Optional[Path] = typer.Option(None, "--source", "-s", show_default=False,
+        help="Any dataset: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a tile directory"),
+    xml: Optional[Path] = typer.Option(None, "--xml", help="Alias for --source (Zeiss XML)", show_default=False),
     out_dir: Path = typer.Option(..., "--out-dir", help="Intended output directory", show_default=False),
     correction: str = typer.Option("basicpy", "--correction", help="[basicpy|median|spatial|none]"),
     algorithm: str = typer.Option("phase", "--algorithm", help="[phase|sift|coordinate]"),
@@ -172,6 +187,9 @@ def estimate(
     ref_tag: str = typer.Option("", "--ref-tag", help="Split-channel reference tag"),
     target_tags: str = typer.Option("", "--target-tags", help="Comma-separated target channel tags"),
     z_mode: str = typer.Option("none", "--z-mode", help="[none|mip_align_3d|ref_slice_3d|mip_output_only]"),
+    overlap: float = typer.Option(0.1, "--overlap", help="Tile overlap fraction for a filename-grid folder"),
+    grid_cols: Optional[int] = typer.Option(None, "--grid-cols", help="Columns, for filenames with a linear position index"),
+    pixel_size_um: Optional[float] = typer.Option(None, "--pixel-size-um", help="Micrometres per pixel"),
     json_output: bool = typer.Option(False, "--json", help="Output JSON"),
 ) -> None:
     """Size a stitching job before running it: canvas, peak RAM, disk, rough time."""
@@ -179,7 +197,7 @@ def estimate(
 
     try:
         config = StitchConfig(
-            xml_path=xml.resolve(),
+            source=_resolve_source(source, xml),
             out_dir=out_dir.resolve(),
             correction=correction,
             algorithm=algorithm,
@@ -187,6 +205,9 @@ def estimate(
             ref_tag=ref_tag,
             target_tags=[t.strip() for t in target_tags.split(",") if t.strip()],
             z_mode=z_mode,
+            overlap=overlap,
+            grid_cols=grid_cols,
+            pixel_size_um=pixel_size_um,
         )
         result = estimate_stitch(config)
     except Exception as exc:
@@ -247,7 +268,9 @@ def estimate(
 
 @app.command()
 def validate(
-    xml: Path = typer.Option(..., "--xml", help="Zeiss XML path", show_default=False),
+    source: Optional[Path] = typer.Option(None, "--source", "-s", show_default=False,
+        help="Any dataset: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a tile directory"),
+    xml: Optional[Path] = typer.Option(None, "--xml", help="Alias for --source (Zeiss XML)", show_default=False),
     out_dir: Path = typer.Option(Path("./output"), "--out-dir", help="Output directory to check"),
     correction: str = typer.Option("basicpy", "--correction"),
     algorithm: str = typer.Option("phase", "--algorithm"),
@@ -259,7 +282,7 @@ def validate(
 
     try:
         config = StitchConfig(
-            xml_path=xml.resolve(),
+            source=_resolve_source(source, xml),
             out_dir=out_dir.resolve(),
             correction=correction,
             algorithm=algorithm,
@@ -293,7 +316,9 @@ def validate(
 
 @app.command()
 def stitch(
-    xml: Path = typer.Option(..., "--xml", help="Zeiss _info.xml or _meta.xml path", show_default=False),
+    source: Optional[Path] = typer.Option(None, "--source", "-s", show_default=False,
+        help="Any dataset: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a tile directory"),
+    xml: Optional[Path] = typer.Option(None, "--xml", help="Alias for --source (Zeiss XML)", show_default=False),
     out_dir: Path = typer.Option(..., "--out-dir", help="Output directory", show_default=False),
     correction: str = typer.Option("basicpy", "--correction", help="[basicpy|median|spatial|none]"),
     algorithm: str = typer.Option("phase", "--algorithm", help="[phase|sift|coordinate]"),
@@ -304,15 +329,18 @@ def stitch(
     alignment_mode: str = typer.Option("reference", "--alignment-mode", help="[reference|average|max_projection]"),
     z_mode: str = typer.Option("none", "--z-mode", help="[none|mip_align_3d|ref_slice_3d|mip_output_only]"),
     ref_z_slice: int = typer.Option(0, "--ref-z-slice", help="Reference Z-slice index"),
+    overlap: float = typer.Option(0.1, "--overlap", help="Tile overlap fraction for a filename-grid folder"),
+    grid_cols: Optional[int] = typer.Option(None, "--grid-cols", help="Columns, for filenames with a linear position index"),
+    pixel_size_um: Optional[float] = typer.Option(None, "--pixel-size-um", help="Micrometres per pixel (converts stage-unit positions)"),
     json_output: bool = typer.Option(False, "--json", help="Output JSON instead of rich formatting"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress progress UI"),
 ) -> None:
-    """Run the full AXIO stitching pipeline on a Zeiss dataset."""
+    """Run the full AXIO stitching pipeline on any supported dataset (Zeiss or vendor-neutral)."""
     from .engine import StitchingEngine
 
     try:
         config = StitchConfig(
-            xml_path=xml.resolve(),
+            source=_resolve_source(source, xml),
             out_dir=out_dir.resolve(),
             correction=correction,
             algorithm=algorithm,
@@ -323,6 +351,9 @@ def stitch(
             alignment_mode=alignment_mode,
             z_mode=z_mode,
             ref_z_slice=ref_z_slice,
+            overlap=overlap,
+            grid_cols=grid_cols,
+            pixel_size_um=pixel_size_um,
         )
     except Exception as exc:
         if _emit({"success": False, "error_message": str(exc)}, json_output):

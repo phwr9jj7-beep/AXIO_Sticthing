@@ -84,17 +84,40 @@ class SceneInfo(BaseModel):
 # Stitching configuration — mirrors gui_runner.py argparse exactly
 # ---------------------------------------------------------------------------
 
+class SourceType(str, Enum):
+    """How a dataset's tile positions are obtained (see axio_stitching.tile_sources)."""
+    ZEISS = "zeiss"
+    FIJI = "fiji"
+    OME = "ome"
+    EXPLICIT = "explicit"
+    GRID = "grid"
+
+
 class StitchConfig(BaseModel):
     """
     Complete stitching pipeline configuration.
 
-    Parameter names and defaults exactly match those documented in SPEC.md §2
-    (gui_runner.py Arguments table). This model is the single source of truth
-    for pipeline configuration and is shared by the CLI, MCP server, and GUI.
+    This model is the single source of truth for pipeline configuration and is shared by the
+    CLI, MCP server, and GUI.
+
+    The dataset is named by ``source`` — a file (Zeiss ``_info.xml``/``_meta.xml``, a Fiji
+    ``TileConfiguration.txt``, a positions ``.json``, or an OME-TIFF) **or a directory of
+    tiles**. ``xml_path`` is kept as a backward-compatible alias for ``source``; exactly one
+    of the two is required and both resolve to :attr:`source_path`. The vendor-neutral input
+    layer (:mod:`axio_stitching.tile_sources`) auto-detects the format, so the pipeline is no
+    longer Zeiss-only.
     """
 
-    # Required
-    xml_path: Path = Field(..., description="Absolute path to Zeiss _info.xml or _meta.xml")
+    # Dataset location — `source` (generic) or its alias `xml_path` (Zeiss-era name).
+    source: Path | None = Field(
+        None,
+        description="Dataset: a Zeiss XML / Fiji TileConfiguration / positions JSON / "
+                    "OME-TIFF, or a directory of tiles.",
+    )
+    xml_path: Path | None = Field(
+        None,
+        description="Backward-compatible alias for `source` (originally a Zeiss _info.xml/_meta.xml).",
+    )
     out_dir: Path = Field(..., description="Directory where output files are saved")
 
     # Algorithm selection
@@ -129,10 +152,55 @@ class StitchConfig(BaseModel):
     )
     ref_z_slice: int = Field(0, ge=0, description="Reference Z-slice index (for ref_slice_3d mode)")
 
+    # Generic (non-Zeiss) input options — used by the tile_sources layer.
+    positions: list[dict] | None = Field(
+        None,
+        description="Explicit tile positions [{filename, x, y[, scene]}], overriding source detection."
+    )
+    overlap: float = Field(
+        0.1, ge=0.0, lt=1.0,
+        description="Tile overlap fraction for the filename-grid layout (0-1)."
+    )
+    grid_cols: int | None = Field(
+        None, gt=0,
+        description="Column count for filenames that carry a linear position index."
+    )
+    serpentine: bool = Field(
+        True,
+        description="Whether a linear position index snakes (boustrophedon) vs. raster-scans."
+    )
+    pixel_size_um: float | None = Field(
+        None, gt=0,
+        description="Micrometres per pixel, to convert stage-unit positions to pixels."
+    )
+    tile_width: int | None = Field(None, gt=0, description="Override tile width in pixels.")
+    tile_height: int | None = Field(None, gt=0, description="Override tile height in pixels.")
+
+    @property
+    def source_path(self) -> Path:
+        """The resolved dataset path (``source`` if given, else the ``xml_path`` alias)."""
+        resolved = self.source or self.xml_path
+        assert resolved is not None  # guaranteed by the validator
+        return resolved
+
+    @property
+    def tile_size(self) -> tuple[int, int] | None:
+        """``(width, height)`` override, or None to read it from a sample tile."""
+        if self.tile_width and self.tile_height:
+            return self.tile_width, self.tile_height
+        return None
+
     @model_validator(mode="after")
     def validate_paths(self) -> "StitchConfig":
-        if not self.xml_path.exists():
-            raise ValueError(f"XML file does not exist: {self.xml_path}")
+        if self.source is None and self.xml_path is None:
+            raise ValueError("either `source` or `xml_path` must be provided")
+        if self.source is not None and self.xml_path is not None and self.source != self.xml_path:
+            raise ValueError("provide only one of `source` / `xml_path` (they are aliases)")
+        resolved = self.source_path
+        # Explicit positions carry their own filenames; the path then only has to be a real
+        # directory (or a positions file). Otherwise the source must exist on disk.
+        if not resolved.exists():
+            raise ValueError(f"source does not exist: {resolved}")
         return self
 
     model_config = ConfigDict(populate_by_name=True)

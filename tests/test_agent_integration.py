@@ -231,6 +231,13 @@ class TestRenderInstalledSkill:
         ):
             assert tool in SKILL, f"the installed skill must teach {tool}"
 
+    def test_teaches_non_zeiss_sources(self):
+        # The headline capability must be discoverable in the skill an agent reads.
+        for token in ("Fiji", "TileConfiguration", "OME-TIFF", "vendor-neutral", "axio_detect_source"):
+            assert token in SKILL, f"the installed skill must mention {token}"
+        # And it must warn not to trust an inferred grid with coordinate mode.
+        assert "coordinate" in SKILL and "grid" in SKILL.lower()
+
     def test_names_no_single_platform_registration_mechanism(self):
         # The same render ships to Claude Code, Codex and Antigravity, so it must stay neutral.
         for platform_ism in (".mcp.json", "claude_desktop_config", "mcp_config.json", "config.toml"):
