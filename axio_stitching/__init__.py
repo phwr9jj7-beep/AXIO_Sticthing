@@ -10,7 +10,7 @@ Exports:
     __version__       – Package version string.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __author__ = "Ziyi Wong"
 __license__ = "MIT"
 

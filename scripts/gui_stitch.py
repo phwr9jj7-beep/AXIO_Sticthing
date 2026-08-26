@@ -125,6 +125,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AXIO Stitching Studio")
+        self._set_window_icon()
         self.setMinimumSize(QSize(1000, 700))
         self.worker = None
         self.current_xml_path = None
@@ -478,6 +479,20 @@ class MainWindow(QMainWindow):
             self.on_file_loaded(text)
 
     # -- Launch context (agent handoff) ------------------------------------------------
+
+    def _set_window_icon(self):
+        """The app icon, found in a source checkout (repo/assets) or a frozen bundle
+        (_internal/assets via sys._MEIPASS). Missing icon = default Qt icon, never an error."""
+        from PySide6.QtGui import QIcon
+
+        candidates = []
+        if getattr(sys, "frozen", False):
+            candidates.append(Path(getattr(sys, "_MEIPASS", "")) / "assets" / "icon.png")
+        candidates.append(Path(__file__).resolve().parent.parent / "assets" / "icon.png")
+        for candidate in candidates:
+            if candidate.is_file():
+                self.setWindowIcon(QIcon(str(candidate)))
+                return
 
     def _apply_launch_context(self):
         """
