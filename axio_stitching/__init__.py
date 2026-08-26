@@ -25,7 +25,9 @@ from .models import (
     StitchAlgorithm,
     AlignmentMode,
     ZMode,
+    SourceType,
 )
+from .tile_sources import ResolvedSource, TileSourceError, resolve_tiles, detect_source_type
 
 __all__ = [
     "StitchingEngine",
@@ -38,5 +40,10 @@ __all__ = [
     "StitchAlgorithm",
     "AlignmentMode",
     "ZMode",
+    "SourceType",
+    "ResolvedSource",
+    "TileSourceError",
+    "resolve_tiles",
+    "detect_source_type",
     "__version__",
 ]

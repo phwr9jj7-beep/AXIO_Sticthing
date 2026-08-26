@@ -1,15 +1,16 @@
 ---
 name: axio-stitching-pipeline
 description: >-
-  Stitch Zeiss Axio tile-scan microscopy datasets with AXIO Stitching Studio via its MCP
-  tools or the `axio` CLI: inspect _info.xml / _meta.xml metadata, estimate canvas size and
-  peak memory before committing, apply BaSiCPy / median / spatial shading correction,
-  register tiles by phase correlation, SIFT or stage coordinates, and assemble
-  multi-channel, split-channel and 3D Z-stack mosaics as ImageJ-compatible TIFFs. Use it
-  for ANY request to stitch, mosaic, assemble or flatfield-correct microscope tiles, to
-  read tile-scan metadata, or to QC an already-stitched mosaic - never hand-roll a
-  stitching script for that. Also covers wiring the pipeline into Claude Code, the ChatGPT
-  desktop app / Codex, and Google Antigravity.
+  Stitch microscopy tile-scan datasets with AXIO Stitching Studio via its MCP tools or the
+  `axio` CLI - Zeiss AND vendor-neutral: Zeiss _info.xml / _meta.xml, Fiji/ImageJ
+  TileConfiguration.txt, OME-TIFF stage positions, an explicit positions list, or a bare
+  folder of TIFFs with grid-encoded filenames. Estimate canvas size and peak memory before
+  committing, apply BaSiCPy / median / spatial shading correction, register tiles by phase
+  correlation, SIFT or stage coordinates, and assemble multi-channel, split-channel and 3D
+  Z-stack mosaics as ImageJ-compatible TIFFs. Use it for ANY request to stitch, mosaic,
+  assemble or flatfield-correct microscope tiles, to read tile-scan metadata, or to QC an
+  already-stitched mosaic - never hand-roll a stitching script for that. Also covers wiring
+  the pipeline into Claude Code, the ChatGPT desktop app / Codex, and Google Antigravity.
 ---
 
 # AXIO tile-scan stitching (source checkout)
@@ -50,27 +51,38 @@ every `✗` before running a pipeline; each check prints its own fix.
 Without an editable install, every command below also works as
 `python -m axio_stitching.cli <subcommand>` from the repo root.
 
-## 1. Read the dataset
+## 1. Read the dataset (Zeiss OR non-Zeiss)
+
+The `--source` (or MCP `source`) may be any of these — it is auto-detected:
+
+| Source | Example | Positions from |
+|---|---|---|
+| Zeiss XML | `scan_info.xml` / `scan_meta.xml` | stage coords / meander grid |
+| Fiji config | `TileConfiguration.txt` / `.registered.txt` | pixel positions in the file |
+| OME-TIFF | a folder of `*.ome.tif` with `Plane PositionX/Y` | embedded stage metadata |
+| positions JSON | `{"tiles":[{"filename","x","y"}]}` | you/the user supply them |
+| tile folder | filenames like `x00_y01`, `r0c1`, `Position012` | inferred grid + `--overlap` |
 
 ```bash
-axio inspect --xml "D:/data/scan_info.xml"
-axio inspect --xml "D:/data/scan_info.xml" --json
+axio inspect --source "D:/data/scan_info.xml"        # Zeiss
+axio inspect --source "D:/data/fiji_tiles"           # a folder with TileConfiguration.txt
+axio inspect --source "D:/data/ome_tiles" --json     # OME-TIFFs with stage positions
 ```
 
-This tells you the three facts that decide every parameter:
+(`--xml` is a legacy alias for `--source`.) The report tells you the three facts that decide
+every parameter — how many **scenes**, whether tiles are **multi-page** (channels inside each
+TIFF → `--ref-channel`) or **split-channel** (one file per channel → `--ref-tag`/`--target-tags`),
+and whether there is a **Z** dimension — plus the detected `source_type` and `confidence`.
 
-- **How many scenes.** Each is stitched into its own mosaic.
-- **Multi-page or split-channel.** Multi-page = channels live inside each tile TIFF (use
-  `--ref-channel`). Split-channel = one file per channel, distinguished by a filename tag
-  (use `--ref-tag` / `--target-tags`).
-- **Whether there is a Z dimension**, from `_z<NN>_` filename tags or the tile's own Z axis.
-
-The raw tile TIFFs must sit in the same directory as the XML.
+**Non-Zeiss rules:** a **filename-grid folder** is only an approximate layout
+(`confidence: low`) — stitch it with `phase`/`sift`, **not** `coordinate`, and pass `--overlap`
+(and `--grid-cols` if filenames carry a linear index). **OME / µm positions** need `--pixel-size-um`
+when the source omits `PhysicalSizeX`. The tile TIFFs must sit in the source directory.
 
 ## 2. Size the job before committing to it
 
 ```bash
-axio estimate --xml "D:/data/scan_info.xml" --out-dir "D:/out" \
+axio estimate --source "D:/data/scan_info.xml" --out-dir "D:/out" \
               --correction basicpy --algorithm phase --z-mode mip_align_3d
 ```
 
@@ -90,8 +102,8 @@ run.
 ## 3. Validate, then run
 
 ```bash
-axio validate --xml "D:/data/scan_info.xml" --out-dir "D:/out" --correction basicpy --algorithm phase
-axio stitch   --xml "D:/data/scan_info.xml" --out-dir "D:/out" \
+axio validate --source "D:/data/scan_info.xml" --out-dir "D:/out" --correction basicpy --algorithm phase
+axio stitch   --source "D:/data/scan_info.xml" --out-dir "D:/out" \
               --correction basicpy --algorithm phase --scene 0
 ```
 
@@ -204,9 +216,13 @@ See `docs/AGENT_INTEGRATION.md` for the per-platform paths.
 
 ## Scope
 
-Zeiss Axio tile scans and the mosaics this pipeline produces. **Not** for registering
-non-tiled images, for non-Zeiss acquisition formats (use Bio-Formats), or for downstream
-segmentation and analysis of an already-stitched image.
+Microscopy **tile scans** — Zeiss and vendor-neutral (Fiji TileConfiguration, OME-TIFF
+stage positions, an explicit positions list, or a grid-encoded tile folder) — and the
+mosaics this pipeline produces. Pixel data is read as plain TIFF, so a proprietary
+acquisition container that is not already TIFF (`.czi`, `.nd2`, `.lif`, …) must first be
+exported to OME-TIFF (Bio-Formats / `bfconvert`) or accompanied by a TileConfiguration or
+positions list. **Not** for registering non-tiled images, or for downstream segmentation and
+analysis of an already-stitched image.
 
 ## Reference
 

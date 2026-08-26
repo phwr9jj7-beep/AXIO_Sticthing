@@ -30,7 +30,7 @@ from typing import Any
 
 from .doctor import disk_free_bytes, human_bytes, memory_bytes
 from .models import CorrectionMethod, StitchAlgorithm, StitchConfig, ZMode
-from .parsers import parse_zeiss_xml
+from .tile_sources import TileSourceError, resolve_tiles
 
 # ---------------------------------------------------------------------------
 # Cost constants — order-of-magnitude, single modern CPU core-set
@@ -238,21 +238,31 @@ def estimate_stitch(config: StitchConfig) -> StitchEstimate:
     estimate.free_disk_bytes = disk_free_bytes(config.out_dir)
 
     # A dataset we cannot read is a verdict, not an exception: every caller of this function
-    # is told to "act on the verdict", so an unreadable XML must arrive through that channel
-    # rather than as a traceback the caller has to special-case.
+    # is told to "act on the verdict", so an unreadable source must arrive through that
+    # channel rather than as a traceback the caller has to special-case.
     try:
-        scenes_raw, _xml_type, _pixel_scale = parse_zeiss_xml(config.xml_path)
-    except Exception as exc:  # noqa: BLE001 - parsers raise several unrelated types
+        resolved = resolve_tiles(
+            config.source_path,
+            positions=config.positions,
+            overlap=config.overlap,
+            grid_cols=config.grid_cols,
+            serpentine=config.serpentine,
+            tile_size=config.tile_size,
+            pixel_size_um=config.pixel_size_um,
+        )
+    except Exception as exc:  # noqa: BLE001 - TileSourceError and the parsers' own error types
         estimate.verdict = "will_not_fit"
-        estimate.reasons.append(f"the XML could not be parsed: {exc}")
+        estimate.reasons.append(f"the source could not be resolved: {exc}")
         return estimate
 
+    scenes_raw = resolved.scenes
+    estimate.warnings.extend(resolved.warnings)
     if not scenes_raw:
         estimate.verdict = "will_not_fit"
-        estimate.reasons.append("no scenes or tile geometry could be extracted from the XML")
+        estimate.reasons.append("no scenes or tile geometry could be extracted from the source")
         return estimate
 
-    raw_dir = config.xml_path.parent
+    raw_dir = resolved.raw_dir
     target_scenes = [config.scene] if config.scene is not None else sorted(scenes_raw.keys())
 
     for scene_id in target_scenes:

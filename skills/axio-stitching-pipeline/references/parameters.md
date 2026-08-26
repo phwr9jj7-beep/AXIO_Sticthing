@@ -4,6 +4,23 @@ The authoritative list of legal values is whatever the `axio_list_algorithms` MC
 `axio version --json`) reports for the installed build. This document explains what each one
 *means*.
 
+## Input sources (the pipeline is not Zeiss-only)
+
+`source` (CLI `--source`, legacy alias `--xml`) auto-detects any of these — `axio_detect_source`
+classifies without a full parse, `axio_inspect_dataset` reports the detected `source_type`:
+
+| `source_type` | What it is | Positions | Confidence |
+|---|---|---|---|
+| `zeiss` | `_info.xml` (stage coords) or `_meta.xml` (meander grid) | exact | high |
+| `fiji` | Fiji/ImageJ `TileConfiguration.txt` / `.registered.txt` (pixels) | exact | high |
+| `ome` | OME-TIFF tiles with `Plane PositionX/PositionY` (+ `PhysicalSizeX`) | exact | high |
+| `explicit` | inline `positions` or a `.json` `{"tiles":[{"filename","x","y"}]}` | as given | high |
+| `grid` | a folder of TIFFs whose filenames encode a grid (`x00_y01`, `r0c1`, `Position012`) | inferred from `overlap` | low |
+
+A `grid` layout is a *starting guess* (like MIST/m2stitch/ASHLAR before refinement) — stitch it
+with `phase`/`sift`, never `coordinate`. Stage positions in micrometres (OME/JSON) need a pixel
+size: the source's own `PhysicalSizeX`, or `pixel_size_um` when it omits it.
+
 ## Shared parameter set
 
 Every run-shaped tool (`axio_estimate_stitch`, `axio_validate_stitch`, `axio_start_stitch`,
@@ -11,7 +28,10 @@ Every run-shaped tool (`axio_estimate_stitch`, `axio_validate_stitch`, `axio_sta
 
 | Parameter | Type | Default | Legal values | Meaning |
 |---|---|---|---|---|
-| `xml_path` | string | *required* | — | Absolute path to the Zeiss `_info.xml` or `_meta.xml`. The raw tile TIFFs must sit in the **same directory**. |
+| `source` | string | *required* | — | A metadata/positions file, an OME-TIFF, or a **directory of tiles** (see Input sources). `xml_path` / `--xml` is a legacy alias. Tile TIFFs must sit in the source directory. |
+| `overlap` | float | `0.1` | 0–1 | Tile overlap fraction for the filename-`grid` layout only. |
+| `grid_cols` | int | — | — | Column count when `grid` filenames carry a linear position index (e.g. `Position012`). |
+| `pixel_size_um` | float | — | — | Micrometres per pixel, to convert stage-unit (`ome`/`explicit`) positions to pixels. |
 | `out_dir` | string | *required* | — | Where stitched TIFFs, previews and correction intermediates are written. Created if absent. |
 | `correction` | string | `basicpy` | `basicpy`, `median`, `spatial`, `none` | Shading / flatfield correction applied to every tile before registration. |
 | `algorithm` | string | `phase` | `phase`, `sift`, `coordinate` | How tile positions are determined. |
