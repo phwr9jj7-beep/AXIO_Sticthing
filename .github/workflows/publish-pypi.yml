@@ -1,0 +1,92 @@
+# Publish to PyPI — build the sdist + wheel and upload via Trusted Publishing.
+#
+# Runs automatically when a version tag is pushed (after the Release workflow's
+# quality gates exist for the same tag), and is manually dispatchable so any
+# version already on main can be published without cutting a new tag.
+#
+# Authentication: PyPI Trusted Publishing (OIDC) — no API token is stored
+# anywhere. Before the FIRST run, the project owner must register this repo as
+# a pending publisher at https://pypi.org/manage/account/publishing/ with:
+#   PyPI project name : axio-stitching
+#   Owner             : phwr9jj7-beep
+#   Repository        : AXIO_Sticthing
+#   Workflow name     : publish-pypi.yml
+#   Environment name  : pypi
+# After the first successful publish the pending publisher becomes the
+# project's trusted publisher automatically.
+#
+# The wheel carries the agent skill via pyproject's force-include
+# (skills/ -> axio_stitching/_skills); the verify step asserts that mapping and
+# the console scripts actually work in a clean install before anything uploads.
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Verify the wheel in a clean install
+        run: |
+          python -m venv /tmp/verify
+          /tmp/verify/bin/pip install --quiet "$(ls dist/*.whl)[mcp,metrics]"
+          /tmp/verify/bin/axio version --json
+          /tmp/verify/bin/python - <<'EOF'
+          import axio_stitching.mcp_server  # the MCP entry point must import
+          from axio_stitching.agent_runner import source_skill_dir
+          p = source_skill_dir()
+          assert p.exists() and (p / "SKILL.md").exists(), f"skill missing from wheel: {p}"
+          print("wheel verify OK — skill at", p)
+          EOF
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/axio-stitching
+    permissions:
+      # Required for PyPI Trusted Publishing (OIDC token exchange).
+      id-token: write
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Re-runs and tag+dispatch overlaps must not fail on the same version.
+          skip-existing: true
