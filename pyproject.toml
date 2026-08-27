@@ -59,8 +59,8 @@ axio = "axio_stitching.cli:main"
 axio-mcp = "axio_stitching.mcp_server:main"
 
 [project.urls]
-Homepage = "https://github.com/wong-ziyi/AXIO_Sticthing"
-Repository = "https://github.com/wong-ziyi/AXIO_Sticthing"
+Homepage = "https://github.com/phwr9jj7-beep/AXIO_Sticthing"
+Repository = "https://github.com/phwr9jj7-beep/AXIO_Sticthing"
 
 [tool.hatch.build.targets.wheel]
 packages = ["axio_stitching"]
