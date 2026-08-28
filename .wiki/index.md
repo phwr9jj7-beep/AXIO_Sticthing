@@ -2,6 +2,8 @@
 
 Welcome to the internal knowledge base for the Zeiss Axio Microscope stitching pipeline. This wiki documents the algorithms, workflows, timelines, and operational insights of the project.
 
+> **At a glance** — Install: `pip install "axio-stitching[all]"` ([PyPI](https://pypi.org/project/axio-stitching/)) · License: **BSD 3-Clause** (© 2026 BSGOU and OnoLab) · Surfaces: desktop GUI, `axio` CLI, and a 17-tool MCP server for AI agents (`axio agent install`).
+
 ---
 
 ## 🗺️ Table of Contents

@@ -63,3 +63,20 @@ This log registers daily developer and agent actions in the AXIO Stitching proje
 * **Action**: Executed `/wiki-update` to lint the `.wiki/` framework, checking for orphans and rebuilding indices.
 * **Action**: Executed `/lab-commit` to stage and seal all prior GUI, SIFT, and documentation upgrades into the main branch.
 * **Impact**: Formalizes the AROS project state, ensuring rigorous documentation compliance prior to federation sync.
+
+### 🤖 2026-08-26: One Engine, Three Surfaces (v1.1.0)
+* **Action**: Turned the desktop-only Zeiss stitcher into a vendor-neutral pipeline drivable by humans (GUI), scripts (`axio` CLI), and AI agents (MCP server + Agent Skill), all sharing one `StitchingEngine`.
+* **Action**: Added the `tile_sources` layer — auto-detects Zeiss XML, Fiji `TileConfiguration.txt`, OME-TIFF stage positions, an explicit positions list, or grid-encoded tile filenames, each with a confidence rating.
+* **Action**: Shipped the MCP server (17 typed tools over stdio), the `axio-stitching-pipeline` Agent Skill, and the cross-platform `axio agent install` that surgically wires Claude Code, Codex/ChatGPT, Antigravity, Claude Desktop, and Gemini CLI (one owned config key each, backed up, atomic, hash-verified on uninstall).
+* **Impact**: The same dataset stitched by a lab technician in the GUI, by a script on an HPC node, or by an AI agent produces identical mosaics.
+
+### 🎨 2026-08-26: Identity Release (v1.1.1)
+* **Action**: Generated the AXIO icon/logo from one reproducible script (`scripts/generate_icon.py`) — feathered overlapping tiles on dark navy — and applied it across both executables, the Inno installer, and the GUI.
+* **Action**: Release artifacts now ship `SHA256SUMS.txt`; the README documents the unsigned-installer SmartScreen prompt and download verification.
+
+### 📦 2026-08-28: PyPI Publication & BSD-3 Relicense (v1.1.2)
+* **Action**: Published `axio-stitching` to **PyPI** — `pip install "axio-stitching[all]"` now installs on any platform with Python ≥ 3.10 (the first cross-platform install path; prior releases were Windows-only binaries). Verified end-to-end from the live index (console script, MCP import, skill resolution).
+* **Action**: Added `.github/workflows/publish-pypi.yml` — builds sdist + wheel, `twine check`, clean-venv verification, then uploads via **PyPI Trusted Publishing** (OIDC, no stored tokens); triggers on version tags + manual dispatch.
+* **Action**: Relicensed from **MIT to BSD 3-Clause**, Copyright © 2026 BSGOU and OnoLab, across `LICENSE`, `pyproject.toml`, `CITATION.cff`, `README.md`, and `axio_stitching/__init__.py`. (PyPI 1.1.1 keeps its immutable MIT metadata; BSD-3 applies from 1.1.2 onward.)
+* **Action**: Corrected `CITATION.cff`/`pyproject.toml` repository URLs to `github.com/phwr9jj7-beep/AXIO_Sticthing`.
+* **Impact**: The pipeline is installable in one line anywhere, an AI agent can install and register it into itself, and the project carries clear institutional licensing.

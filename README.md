@@ -5,7 +5,8 @@
   <img src="assets/logo.png" alt="AXIO Stitching Studio" width="580">
 </picture>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
+[![PyPI](https://img.shields.io/pypi/v/axio-stitching.svg)](https://pypi.org/project/axio-stitching/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![UI: PySide6](https://img.shields.io/badge/UI-PySide6-green.svg)](https://wiki.qt.io/Qt_for_Python)
 [![Tests](https://img.shields.io/badge/tests-353%20passing-brightgreen.svg)](tests/)
@@ -107,20 +108,33 @@ detected on your machine:
 Uninstalling cleanly deregisters the agent integration before removing files. To rebuild the
 installer from source: `python scripts/build_installer.py` (needs PyInstaller + Inno Setup 6).
 
-## 🛠️ Installation (from source)
+## 🛠️ Installation (Python, any platform)
+
+The package is on **PyPI** — one line installs the `axio` CLI, the MCP server, and
+(with the `[all]` extra) the GUI and BaSiCPy shading correction, on Windows, macOS,
+Linux, or an HPC cluster with Python ≥ 3.10:
+
+```bash
+pip install "axio-stitching[all]"
+```
+
+Lighter footprints: `axio-stitching[mcp,metrics]` for an agent/headless install (no GUI),
+or bare `axio-stitching` for the core engine and CLI only. After installing, run
+`axio agent install` to wire it into your AI agents and `axio doctor` to check the
+environment.
+
+<details>
+<summary>From source (conda or editable pip)</summary>
 
 ```bash
 git clone https://github.com/phwr9jj7-beep/AXIO_Sticthing.git
 cd AXIO_Sticthing
-conda env create -f environment.yml
+conda env create -f environment.yml   # creates axio-stitch-env with every dependency
 conda activate axio-stitch-env
-```
-
-or with plain pip into any Python ≥ 3.10 environment:
-
-```bash
+# …or, into an existing Python ≥ 3.10 environment:
 pip install -e ".[all]"
 ```
+</details>
 
 ## 🚀 Usage
 
@@ -222,3 +236,11 @@ If you use this software, please consider citing the underlying algorithms that 
    *Peng, T., Thorn, K., Schroeder, T. et al. A BaSiC tool for background and shading correction of optical microscopy images. Nat Commun 8, 14836 (2017). https://doi.org/10.1038/ncomms14836*
 2. **SIFT Feature Extraction**: 
    *Lowe, D.G. Distinctive Image Features from Scale-Invariant Keypoints. International Journal of Computer Vision 60, 91–110 (2004). https://doi.org/10.1023/B:VISI.0000029664.99615.94*
+
+## 📄 License
+
+AXIO Stitching Studio is released under the **BSD 3-Clause License** —
+Copyright © 2026 BSGOU and OnoLab. You may use, modify, and redistribute it,
+including commercially, provided the copyright notice and disclaimer are
+retained and the copyright holders' names are not used to endorse derived
+products without permission. See [LICENSE](LICENSE) for the full text.

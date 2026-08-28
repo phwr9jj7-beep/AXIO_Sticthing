@@ -50,3 +50,21 @@ This timeline documents key milestones, imaging runs, and code iterations of the
   - Added consensus alignment (All-Channel Average and MIP projection) and 3D Z-plane stitching with ImageJ-compatible 3D TIFF serialization.
   - Released comprehensive multi-tier test plans and verified cross-platform code execution.
 
+### 🤖 2026-08-26: One Engine, Three Surfaces (v1.1.0)
+- **Event**: The desktop-only Zeiss stitcher becomes a vendor-neutral pipeline with a shared engine behind a GUI, an `axio` CLI, and an AI-agent MCP server.
+- **Milestones**:
+  - **Vendor-neutral input layer** (`tile_sources`): auto-detects Zeiss XML, Fiji TileConfiguration, OME-TIFF stage positions, an explicit positions list, or grid-encoded filenames.
+  - **AI agent integration**: a 17-tool MCP server, the `axio-stitching-pipeline` Agent Skill, and `axio agent install` wiring Claude Code, Codex/ChatGPT, Antigravity, Claude Desktop, and Gemini CLI.
+  - **353-test suite** covering engine, input formats, MCP tools, installer safety, QC, and CLI.
+
+### 🎨 2026-08-26: Identity Release (v1.1.1)
+- **Event**: The application, installer, and docs adopt the AXIO mark; releases ship verifiable checksums.
+- **Milestones**: reproducible icon/logo generation; `SHA256SUMS.txt` on every release; documented SmartScreen/verification flow for the unsigned installer.
+
+### 📦 2026-08-28: PyPI Publication & BSD-3 Relicense (v1.1.2)
+- **Event**: The pipeline becomes installable in one line on any platform, and adopts institutional licensing.
+- **Milestones**:
+  - **On PyPI**: `pip install "axio-stitching[all]"` — the first cross-platform install path (earlier releases were Windows-only binaries). Automated `publish-pypi.yml` builds, verifies, and uploads via PyPI Trusted Publishing (no stored tokens).
+  - **Relicensed MIT → BSD 3-Clause**, Copyright © 2026 BSGOU and OnoLab.
+  - Repository URLs corrected to `github.com/phwr9jj7-beep/AXIO_Sticthing`.
+

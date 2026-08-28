@@ -10,9 +10,9 @@ Exports:
     __version__       – Package version string.
 """
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 __author__ = "Ziyi Wong"
-__license__ = "MIT"
+__license__ = "BSD-3-Clause"
 
 from .engine import StitchingEngine
 from .models import (

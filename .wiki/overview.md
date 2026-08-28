@@ -2,6 +2,14 @@
 
 The **AXIO Stitching** project is a high-throughput, high-resolution spatial microscopy data processing pipeline designed for Zeiss Axio Microscope tile scans. It incorporates flatfield shading corrections and robust global stitching algorithms to assemble large-scale, multi-tile tissue images (up to 5,000+ tiles per scene) into single contiguous mosaics.
 
+Although built for Zeiss Axio scans, the input layer is **vendor-neutral** (auto-detecting Zeiss XML, Fiji TileConfiguration, OME-TIFF stage positions, explicit positions lists, and grid-encoded filenames), and one shared `StitchingEngine` drives three interchangeable surfaces — a **PySide6 desktop GUI**, the **`axio` CLI**, and an **MCP server** (17 typed tools) that AI agents install into themselves via `axio agent install`.
+
+## 📦 Distribution & License
+
+- **Install**: `pip install "axio-stitching[all]"` — on PyPI, cross-platform (Python ≥ 3.10). A per-user Windows installer is also published on the [Releases](https://github.com/phwr9jj7-beep/AXIO_Sticthing/releases) page for machines without Python.
+- **License**: **BSD 3-Clause**, Copyright © 2026 BSGOU and OnoLab (relicensed from MIT at v1.1.2). Free for use, modification, and redistribution, including commercially.
+- **Repository**: [github.com/phwr9jj7-beep/AXIO_Sticthing](https://github.com/phwr9jj7-beep/AXIO_Sticthing).
+
 ---
 
 ## 🔬 Core Datasets

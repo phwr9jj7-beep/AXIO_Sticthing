@@ -2,6 +2,28 @@
 
 All notable changes to AXIO Stitching Studio.
 
+## 1.1.2 — 2026-08-28
+
+Distribution and licensing release. No engine or API changes.
+
+- **Now on PyPI.** `pip install "axio-stitching[all]"` installs the CLI, MCP server,
+  GUI and BaSiCPy correction on any platform with Python ≥ 3.10 — the first
+  cross-platform install path (previous releases shipped Windows binaries only).
+  Lighter extras `[mcp,metrics]` (agent/headless) and bare `axio-stitching` (core +
+  CLI) are also published. `axio agent install` works from a pip-only install with no
+  desktop app — it registers the running interpreter's `python -m
+  axio_stitching.mcp_server`.
+- **Automated publishing.** A new `.github/workflows/publish-pypi.yml` builds the sdist
+  and wheel, runs `twine check`, and verifies the wheel in a clean virtual environment
+  (the console script runs, the MCP server imports, and the bundled agent skill
+  resolves) *before* uploading via PyPI Trusted Publishing — no stored API tokens. It
+  runs on every version tag and on manual dispatch.
+- **License changed to BSD 3-Clause** (from MIT), Copyright © 2026 BSGOU and OnoLab.
+  The already-published 1.1.1 on PyPI keeps its original MIT metadata (PyPI releases are
+  immutable); BSD-3-Clause takes effect from this release onward.
+- Repository/homepage URLs corrected to `github.com/phwr9jj7-beep/AXIO_Sticthing` in
+  `CITATION.cff` and `pyproject.toml` (they had pointed at a non-existent org).
+
 ## 1.1.1 — 2026-08-26
 
 Identity release: the application, installer, and documentation now carry the AXIO mark.
