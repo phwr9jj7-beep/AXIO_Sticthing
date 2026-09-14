@@ -15,9 +15,9 @@ route produces identical results:
 3. the **MCP server** (`axio_stitching.mcp_server`, 17 typed tools for AI agents — see
    `docs/AGENT_INTEGRATION.md` for the tool list, agent-platform installer, and safety contract).
 
-Inputs are auto-detected and no longer Zeiss-only: Zeiss `_info.xml`/`_meta.xml`, Fiji
-`TileConfiguration.txt`, OME-TIFF stage positions, an explicit positions list, or a
-grid-encoded tile folder.
+Inputs are auto-detected and vendor-neutral: Zeiss `_info.xml`/`_meta.xml`, Keyence
+All-in-One `.bcf` archives, Fiji `TileConfiguration.txt`, OME-TIFF stage positions, an
+explicit positions list, or a grid-encoded tile folder.
 
 The desktop application wraps the pipeline into a native, responsive, standalone interface
 using PySide6 (Qt) and a decoupled subprocess execution architecture. When launched by an AI

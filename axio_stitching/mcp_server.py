@@ -75,9 +75,9 @@ WORKFLOW (do not skip steps 1-3; each one prevents a failure mode that costs a w
                               algorithms: basicpy for correction="basicpy", OpenCV for
                               algorithm="sift". They fail at run time, not config time.
   2. axio_inspect_dataset   - read the dataset. `source` may be a Zeiss _info.xml/_meta.xml,
-                              a Fiji TileConfiguration.txt, OME-TIFFs with stage positions, a
-                              positions .json, or a DIRECTORY of tiles with grid-encoded
-                              filenames (axio_detect_source classifies it). It reports the
+                              a Keyence .bcf container, a Fiji TileConfiguration.txt, OME-TIFFs
+                              with stage positions, a positions .json, or a DIRECTORY of tiles with
+                              grid-encoded filenames (axio_detect_source classifies it). It reports the
                               detected source_type, whether tiles are multi-page (use
                               ref_channel) or split-channel (ref_tag + target_tags), the scene
                               count, and whether there is a Z dimension.

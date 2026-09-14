@@ -2,9 +2,9 @@
 name: axio-stitching-pipeline
 description: >-
   Stitch microscopy tile-scan datasets with AXIO Stitching Studio via its MCP tools or the
-  `axio` CLI - Zeiss AND vendor-neutral: Zeiss _info.xml / _meta.xml, Fiji/ImageJ
-  TileConfiguration.txt, OME-TIFF stage positions, an explicit positions list, or a bare
-  folder of TIFFs with grid-encoded filenames. Estimate canvas size and peak memory before
+  `axio` CLI - Zeiss, Keyence, and vendor-neutral: Zeiss _info.xml / _meta.xml, Keyence .bcf,
+  Fiji/ImageJ TileConfiguration.txt, OME-TIFF stage positions, an explicit positions list, or
+  a bare folder of TIFFs with grid-encoded filenames. Estimate canvas size and peak memory before
   committing, apply BaSiCPy / median / spatial shading correction, register tiles by phase
   correlation, SIFT or stage coordinates, and assemble multi-channel, split-channel and 3D
   Z-stack mosaics as ImageJ-compatible TIFFs. Use it for ANY request to stitch, mosaic,
@@ -57,6 +57,7 @@ The `--source` (or MCP `source`) may be any of these — it is auto-detected:
 
 | Source | Example | Positions from |
 |---|---|---|
+| Keyence BCF | `scan.bcf` or folder with `.bcf` | Keyence BCF stage coords & grid table (validated) |
 | Zeiss XML | `scan_info.xml` / `scan_meta.xml` | stage coords / meander grid |
 | Fiji config | `TileConfiguration.txt` / `.registered.txt` | pixel positions in the file |
 | OME-TIFF | a folder of `*.ome.tif` with `Plane PositionX/Y` | embedded stage metadata |

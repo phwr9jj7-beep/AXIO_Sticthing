@@ -142,7 +142,8 @@ def inspect(
     from .engine import StitchingEngine
 
     try:
-        config = StitchConfig(source=_resolve_source(source, xml), out_dir=Path.cwd())
+        source_path = _resolve_source(source, xml)
+        config = StitchConfig(source=source_path, out_dir=Path.cwd())
         metadata = StitchingEngine(config).inspect_metadata()
     except Exception as exc:
         if _emit({"error": str(exc)}, json_output):
@@ -153,7 +154,7 @@ def inspect(
     if _emit(metadata, json_output):
         return
 
-    table = Table(title=f"[bold]Zeiss XML metadata[/bold]  [dim]{xml.name}[/dim]", border_style="cyan")
+    table = Table(title=f"[bold]Dataset metadata[/bold]  [dim]{source_path.name}[/dim]", border_style="cyan")
     table.add_column("Scene", style="bold cyan", justify="right")
     table.add_column("Tiles", justify="right")
     table.add_column("Sample file", style="dim")
@@ -386,7 +387,7 @@ def stitch(
 
     panel = Panel(
         progress,
-        title=f"[bold cyan]AXIO Stitching[/bold cyan]  [dim]{xml.name}[/dim]",
+        title=f"[bold cyan]AXIO Stitching[/bold cyan]  [dim]{config.source_path.name}[/dim]",
         border_style="blue",
     )
     with Live(panel, console=console, refresh_per_second=8):

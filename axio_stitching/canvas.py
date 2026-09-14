@@ -341,15 +341,47 @@ def save_tiff(canvas: np.ndarray, out_path: Path, axes_hint: str | None = None) 
         else:
             axes_meta = "YX"
 
+    is_bigtiff = bool(canvas.nbytes >= 2**32 - 2**25)
     tifffile.imwrite(
         str(out_path),
         canvas,
-        imagej=True,
+        imagej=not is_bigtiff,
+        bigtiff=is_bigtiff,
         photometric="minisblack",
         compression="deflate",
         metadata={"axes": axes_meta, "mode": "composite"},
     )
-    _log(f"      Saved compressed {axes_meta} [{canvas.shape}] -> {out_path.name}")
+    _log(f"      Saved compressed {axes_meta} [{canvas.shape}] (bigtiff={is_bigtiff}) -> {out_path.name}")
+
+    if is_bigtiff:
+        try:
+            from skimage.transform import downscale_local_mean
+
+            ds = 2
+            while (canvas.nbytes / (ds * ds)) >= (3 * 1024**3):
+                ds *= 2
+
+            _log(f"      Generating ImageJ-compatible overview (downsample={ds}x)...")
+            if canvas.ndim == 2:
+                ds_canvas = downscale_local_mean(canvas, (ds, ds)).astype(canvas.dtype)
+            elif canvas.ndim == 3:
+                ds_canvas = downscale_local_mean(canvas, (1, ds, ds)).astype(canvas.dtype)
+            else:
+                ds_canvas = downscale_local_mean(canvas, (1, 1, ds, ds)).astype(canvas.dtype)
+
+            ij_out_path = out_path.with_name(f"{out_path.stem}_imagej_ds{ds}.tif")
+            tifffile.imwrite(
+                str(ij_out_path),
+                ds_canvas,
+                imagej=True,
+                bigtiff=False,
+                photometric="minisblack",
+                compression="deflate",
+                metadata={"axes": axes_meta, "mode": "composite"},
+            )
+            _log(f"      Saved ImageJ-compatible {axes_meta} [{ds_canvas.shape}] -> {ij_out_path.name}")
+        except Exception as exc:
+            _log(f"      Warning: could not generate ImageJ downsampled overview: {exc}")
 
 
 # ---------------------------------------------------------------------------

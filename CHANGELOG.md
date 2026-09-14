@@ -2,6 +2,22 @@
 
 All notable changes to AXIO Stitching Studio.
 
+## 1.2.0 — 2026-09-14
+
+Major feature release: native Keyence All-in-One microscopy support and automated ImageJ compatibility layer.
+
+- **Keyence BCF Support (Validated & Tested)**. Full native parsing of Keyence All-in-One microscopy `.bcf` container archives.
+  - Reverse-engineers the PKZip archive structure to extract hardware stage bounding boxes (`ImageJoint/EdgePoint0..3`), scan grid geometry (`Row`, `Column`), pixel calibration factor (`Image/properties.xml`, e.g. $0.75488\,\mu\text{m/px}$ for PlanFluor 10x), and individual tile mappings from the 58-byte binary records in `ImageList/FileList`.
+  - Empirically validated and benchmarked on real-world brightfield tile-scans containing 3,650 tiles per scene (~4.87 Gigapixels, 66,452 × 73,277 pixels), stitching in ~8.4 minutes per scene (~9.2 tiles/sec).
+  - Auto-detected from a `.bcf` file or any folder containing Keyence `.bcf` metadata with `confidence: high`.
+- **Automated ImageJ <4 GB Compatibility Layer**.
+  - Canvases exceeding 4 GB are automatically written as 64-bit BigTIFF (`bigtiff=True`, `imagej=False`).
+  - Concurrently produces an ImageJ-compatible downsampled overview (`*_imagej_dsN.tif`, <4 GB, standard 32-bit TIFF with ImageJ metadata) so standard ImageJ / Fiji can open the result immediately via `File -> Open...` without `Opener: Unsupported format` or memory errors.
+- **CLI & Model Fixes**.
+  - Added `KEYENCE = "keyence"` to `SourceType` enum in `axio_stitching.models`.
+  - Fixed an `AttributeError: 'NoneType' object has no attribute 'name'` in `axio inspect` and `axio stitch` when using `--source` instead of legacy `--xml`.
+  - Added `imagecodecs` dependency to `pyproject.toml` and bundled it into the PyInstaller standalone distribution for LZW/deflate TIFF compression decoding.
+
 ## 1.1.2 — 2026-08-28
 
 Distribution and licensing release. No engine or API changes.

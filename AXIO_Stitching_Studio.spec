@@ -41,6 +41,7 @@ _HIDDEN = [
     'axio_stitching.jobs',
     'axio_stitching.qc',
     'axio_stitching.tile_sources',
+    'imagecodecs',
     'gui_stitch',
     'gui_runner',
     'gui_worker',

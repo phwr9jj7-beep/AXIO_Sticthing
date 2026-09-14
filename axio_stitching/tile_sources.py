@@ -11,6 +11,8 @@ dominate the field, auto-detecting which one it was handed:
 Source                  How positions are obtained
 ======================  ===================================================================
 ``zeiss``               Delegates to :func:`axio_stitching.parsers.parse_zeiss_xml`.
+``keyence``             Keyence All-in-One microscope **.bcf** archives: grid geometry,
+                        pixel calibration, and per-tile coordinates from BCF metadata.
 ``fiji``                Fiji/ImageJ **TileConfiguration.txt** (the de-facto interchange
                         format): ``filename; ; (x, y[, z])`` in pixels. The
                         ``*.registered.txt`` variant Fiji writes after optimisation is read
@@ -41,7 +43,9 @@ from __future__ import annotations
 
 import json
 import re
+import struct
 import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -170,6 +174,8 @@ def detect_source_type(source: str | Path) -> str:
         return "fiji"
     if _find_zeiss_xml(path):
         return "zeiss"
+    if _find_keyence_bcf(path):
+        return "keyence"
     if _first_ome_with_position(_list_tiles(path)):
         return "ome"
     if _list_tiles(path):
@@ -189,6 +195,8 @@ def _classify_file(path: Path) -> str:
         return "fiji"
     if name.endswith(".json"):
         return "explicit"
+    if name.endswith(".bcf"):
+        return "keyence"
     if name.endswith((".ome.tif", ".ome.tiff")):
         return "ome"
     if name.endswith(".xml"):
@@ -204,6 +212,13 @@ def _resolve_file(path: Path, **kw) -> ResolvedSource:
     kind = _classify_file(path)
     if kind == "zeiss":
         return _from_zeiss(path)
+    if kind == "keyence":
+        return _from_keyence(
+            path,
+            tile_size=kw.get("tile_size"),
+            pixel_size_um=kw.get("pixel_size_um"),
+            overlap=kw.get("overlap", 0.1),
+        )
     if kind == "fiji":
         return _from_fiji(path, kw.get("tile_size"))
     if kind == "explicit":
@@ -214,7 +229,7 @@ def _resolve_file(path: Path, **kw) -> ResolvedSource:
         return _resolve_directory(path.parent, **kw)
     raise TileSourceError(
         f"unrecognised source file: {path.name}. Supported: Zeiss _info.xml/_meta.xml, "
-        "a Fiji TileConfiguration.txt, a positions .json, an OME-TIFF, or a directory of tiles."
+        "Keyence .bcf, a Fiji TileConfiguration.txt, a positions .json, an OME-TIFF, or a directory of tiles."
     )
 
 
@@ -232,11 +247,22 @@ def _resolve_directory(path: Path, **kw) -> ResolvedSource:
         result.notes.insert(0, f"used the Zeiss metadata {zeiss.name} found in the directory")
         return result
 
+    keyence = _find_keyence_bcf(path)
+    if keyence:
+        result = _from_keyence(
+            keyence,
+            tile_size=kw.get("tile_size"),
+            pixel_size_um=kw.get("pixel_size_um"),
+            overlap=kw.get("overlap", 0.1),
+        )
+        result.notes.insert(0, f"used the Keyence metadata {keyence.name} found in the directory")
+        return result
+
     tiles = _list_tiles(path)
     if not tiles:
         raise TileSourceError(
             f"no tiles or layout found in {path}. Provide a Fiji TileConfiguration.txt, a "
-            "Zeiss _info.xml, OME-TIFFs with stage positions, or an explicit positions list."
+            "Zeiss _info.xml, a Keyence .bcf, OME-TIFFs with stage positions, or an explicit positions list."
         )
 
     if _first_ome_with_position(tiles):
@@ -283,6 +309,11 @@ def _find_zeiss_xml(directory: Path) -> Path | None:
     return None
 
 
+def _find_keyence_bcf(directory: Path) -> Path | None:
+    matches = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() == ".bcf")
+    return matches[0] if matches else None
+
+
 def _read_tile_size(sample: Path, override: tuple[int, int] | None) -> tuple[int, int, str | None]:
     """``(width, height, note)`` — from override, else a real tile, else the default."""
     if override:
@@ -322,6 +353,149 @@ def _from_zeiss(path: Path) -> ResolvedSource:
         tile_width=tile_w,
         tile_height=tile_h,
         notes=[f"parsed Zeiss {xml_type}.xml"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# keyence .bcf container
+# ---------------------------------------------------------------------------
+
+def _from_keyence(
+    path: Path,
+    tile_size: tuple[int, int] | None = None,
+    pixel_size_um: float | None = None,
+    overlap: float = 0.1,
+) -> ResolvedSource:
+    """
+    Parse a Keyence All-in-One microscope container (.bcf) to extract tile positions.
+
+    Keyence .bcf files are ZIP archives storing acquisition parameters in XML and a
+    binary FileList table containing per-tile (row, col) grid coordinates.
+    """
+    warnings: list[str] = []
+    raw_dir = path.parent
+
+    if not zipfile.is_zipfile(path):
+        raise TileSourceError(f"{path.name} is not a valid Keyence BCF (zip) file")
+
+    with zipfile.ZipFile(path, "r") as z:
+        names = set(z.namelist())
+
+        # 1. Tile dimensions
+        tile_w = tile_h = None
+        if "GroupFileProperty/Image/OriginalImageSize/properties.xml" in names:
+            try:
+                root_sz = ET.fromstring(z.read("GroupFileProperty/Image/OriginalImageSize/properties.xml"))
+                tile_w = int(root_sz.findtext("Width") or 0)
+                tile_h = int(root_sz.findtext("Height") or 0)
+            except Exception:
+                pass
+
+        if not tile_w or not tile_h:
+            sample_candidates = sorted(p for p in raw_dir.glob("*.tif"))
+            if sample_candidates:
+                tile_w, tile_h, size_note = _read_tile_size(sample_candidates[0], tile_size)
+                if size_note:
+                    warnings.append(size_note)
+            else:
+                tile_w, tile_h = 1920, 1440
+
+        # 2. Pixel scale (Calibration in nm/pixel)
+        cal_um = pixel_size_um
+        if cal_um is None and "GroupFileProperty/Image/properties.xml" in names:
+            try:
+                root_img = ET.fromstring(z.read("GroupFileProperty/Image/properties.xml"))
+                cal_node = root_img.find("Calibration")
+                if cal_node is not None and cal_node.text:
+                    val_int = int(cal_node.text)
+                    cal_nm = struct.unpack("<d", struct.pack("<q", val_int))[0]
+                    if cal_nm > 0:
+                        cal_um = cal_nm / 1000.0
+            except Exception:
+                pass
+
+        # 3. Grid dimensions (Rows & Columns)
+        rows = cols = None
+        if "GroupFileProperty/ImageJoint/properties.xml" in names:
+            try:
+                root_joint = ET.fromstring(z.read("GroupFileProperty/ImageJoint/properties.xml"))
+                rows = int(root_joint.findtext("Row") or 0)
+                cols = int(root_joint.findtext("Column") or 0)
+            except Exception:
+                pass
+
+        # 4. Stage EdgePoints (coordinates in nm)
+        edge_pts: dict[int, tuple[int, int]] = {}
+        for i in range(4):
+            pt_path = f"GroupFileProperty/ImageJoint/EdgePoint{i}/properties.xml"
+            if pt_path in names:
+                try:
+                    root_pt = ET.fromstring(z.read(pt_path))
+                    if root_pt.findtext("Enabled") == "True":
+                        x = int(root_pt.findtext("X") or 0)
+                        y = int(root_pt.findtext("Y") or 0)
+                        edge_pts[i] = (x, y)
+                except Exception:
+                    pass
+
+        # Compute tile pitch / step in pixels
+        if len(edge_pts) >= 4 and cols and rows and cols > 1 and rows > 1 and cal_um:
+            dx_nm = abs(edge_pts[1][0] - edge_pts[0][0])
+            dy_nm = abs(edge_pts[0][1] - edge_pts[3][1])
+            step_x_px = (dx_nm / (cols - 1)) / 1000.0 / cal_um
+            step_y_px = (dy_nm / (rows - 1)) / 1000.0 / cal_um
+        else:
+            step_x_px = tile_w * (1.0 - overlap)
+            step_y_px = tile_h * (1.0 - overlap)
+            warnings.append(
+                f"could not determine stage step from edge points; assumed {overlap:.0%} overlap"
+            )
+
+        # 5. Tile FileList
+        if "GroupFileProperty/ImageList/FileList" not in names:
+            raise TileSourceError(f"no ImageList/FileList found in Keyence BCF {path.name}")
+
+        file_list_data = z.read("GroupFileProperty/ImageList/FileList")
+        if len(file_list_data) < 4:
+            raise TileSourceError(f"empty FileList in {path.name}")
+
+        count = struct.unpack_from("<I", file_list_data, 0)[0]
+        record_size = 58
+        if len(file_list_data) < 4 + count * record_size:
+            raise TileSourceError(
+                f"corrupted FileList in {path.name}: expected {4 + count * record_size} bytes, "
+                f"got {len(file_list_data)}"
+            )
+
+        scene_tiles: list[dict] = []
+        for i in range(count):
+            rec = file_list_data[4 + i * record_size : 4 + (i + 1) * record_size]
+            r = struct.unpack_from("<i", rec, 17)[0]
+            c = struct.unpack_from("<i", rec, 21)[0]
+            fn_len = rec[25]
+            fn = rec[26 : 26 + fn_len].decode("latin1").strip("\x00")
+            scene_tiles.append({
+                "filename": fn,
+                "x": float(c * step_x_px),
+                "y": float(r * step_y_px),
+                "w": tile_w,
+                "h": tile_h,
+            })
+
+    if not scene_tiles:
+        raise TileSourceError(f"no tile records found in Keyence BCF {path.name}")
+
+    scale_str = f" at {cal_um:.4g} µm/px" if cal_um else ""
+    return ResolvedSource(
+        scenes={0: scene_tiles},
+        raw_dir=raw_dir,
+        source_type="keyence",
+        confidence="high",
+        pixel_scale_um=cal_um,
+        tile_width=tile_w,
+        tile_height=tile_h,
+        notes=[f"parsed Keyence BCF metadata ({len(scene_tiles)} tiles, {cols}x{rows} grid){scale_str}"],
+        warnings=warnings,
     )
 
 

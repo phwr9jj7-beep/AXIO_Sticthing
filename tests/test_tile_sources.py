@@ -342,3 +342,118 @@ class TestDirectoryPrecedence:
         r = resolve_tiles(d)
         assert r.source_type == "fiji"
         assert max(t["x"] for t in r.scenes[0]) == 999.0  # from the config, not the grid
+
+
+# ---------------------------------------------------------------------------
+# Keyence BCF
+# ---------------------------------------------------------------------------
+
+class TestKeyence:
+    def _make(self, tmp_path: Path) -> Path:
+        import struct
+        import zipfile
+
+        d = tmp_path / "keyence"
+        d.mkdir()
+        for name in ("tile_001.tif", "tile_002.tif", "tile_003.tif", "tile_004.tif"):
+            _write_tile(d / name, w=1920, h=1440)
+
+        bcf_path = d / "scan.bcf"
+        with zipfile.ZipFile(bcf_path, "w") as z:
+            z.writestr(
+                "GroupFileProperty/properties.xml",
+                '<Store><Prefix>scan</Prefix><ChannelCount>1</ChannelCount></Store>',
+            )
+            z.writestr(
+                "GroupFileProperty/Image/OriginalImageSize/properties.xml",
+                '<Store><Width>1920</Width><Height>1440</Height></Store>',
+            )
+            # Calibration: 754.88 nm/px encoded as double in int64
+            cal_int = struct.unpack("<q", struct.pack("<d", 754.88358))[0]
+            z.writestr(
+                "GroupFileProperty/Image/properties.xml",
+                f'<Store><Calibration Type="System.Double">{cal_int}</Calibration></Store>',
+            )
+            z.writestr(
+                "GroupFileProperty/ImageJoint/properties.xml",
+                '<Store><Row>2</Row><Column>2</Column></Store>',
+            )
+            # Step in nm: dx = 994168 nm, dy = 753181 nm
+            # Edge points: 0: (0, 753181), 1: (994168, 753181), 2: (994168, 0), 3: (0, 0)
+            z.writestr(
+                "GroupFileProperty/ImageJoint/EdgePoint0/properties.xml",
+                '<Store><Enabled>True</Enabled><X>0</X><Y>753181</Y><Z>0</Z></Store>',
+            )
+            z.writestr(
+                "GroupFileProperty/ImageJoint/EdgePoint1/properties.xml",
+                '<Store><Enabled>True</Enabled><X>994168</X><Y>753181</Y><Z>0</Z></Store>',
+            )
+            z.writestr(
+                "GroupFileProperty/ImageJoint/EdgePoint2/properties.xml",
+                '<Store><Enabled>True</Enabled><X>994168</X><Y>0</Y><Z>0</Z></Store>',
+            )
+            z.writestr(
+                "GroupFileProperty/ImageJoint/EdgePoint3/properties.xml",
+                '<Store><Enabled>True</Enabled><X>0</X><Y>0</Y><Z>0</Z></Store>',
+            )
+
+            # Build 4 records: (row, col): (0,0), (0,1), (1,0), (1,1)
+            file_list = bytearray()
+            file_list += struct.pack("<I", 4)
+            tiles = [
+                ("tile_001.tif", 0, 0),
+                ("tile_002.tif", 0, 1),
+                ("tile_003.tif", 1, 0),
+                ("tile_004.tif", 1, 1),
+            ]
+            for fn, r, c in tiles:
+                rec = bytearray(58)
+                rec[0] = 8
+                rec[1:9] = b"Channel1"
+                struct.pack_into("<i", rec, 17, r)
+                struct.pack_into("<i", rec, 21, c)
+                fn_bytes = fn.encode("latin1")
+                rec[25] = len(fn_bytes)
+                rec[26:26+len(fn_bytes)] = fn_bytes
+                file_list += rec
+            z.writestr("GroupFileProperty/ImageList/FileList", bytes(file_list))
+
+        return bcf_path
+
+    def test_detected_from_file(self, tmp_path):
+        bcf = self._make(tmp_path)
+        assert detect_source_type(bcf) == "keyence"
+
+    def test_detected_from_directory(self, tmp_path):
+        bcf = self._make(tmp_path)
+        assert detect_source_type(bcf.parent) == "keyence"
+
+    def test_positions_and_scale_resolved(self, tmp_path):
+        bcf = self._make(tmp_path)
+        r = resolve_tiles(bcf.parent)
+        assert r.source_type == "keyence"
+        assert r.confidence == "high"
+        assert r.total_tiles == 4
+        assert r.pixel_scale_um is not None and abs(r.pixel_scale_um - 0.75488) < 1e-4
+        tiles = {t["filename"]: (t["x"], t["y"]) for t in r.scenes[0]}
+        assert tiles["tile_001.tif"] == (0.0, 0.0)
+        assert abs(tiles["tile_002.tif"][0] - 1317.0) < 1.0
+        assert abs(tiles["tile_003.tif"][1] - 997.7) < 1.0
+
+    def test_corrupted_bcf_raises(self, tmp_path):
+        bad_bcf = tmp_path / "broken.bcf"
+        bad_bcf.write_bytes(b"not a zip")
+        with pytest.raises(TileSourceError, match="not a valid Keyence BCF"):
+            resolve_tiles(bad_bcf)
+
+    def test_source_type_enum(self, tmp_path):
+        from axio_stitching.models import SourceType
+        bcf = self._make(tmp_path)
+        r = resolve_tiles(bcf)
+        assert SourceType(r.source_type) == SourceType.KEYENCE
+
+    def test_skill_render_includes_keyence(self):
+        from axio_stitching.agent_integration import render_installed_skill
+        skill_text = render_installed_skill()
+        assert "Keyence BCF" in skill_text
+

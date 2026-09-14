@@ -87,6 +87,7 @@ class SceneInfo(BaseModel):
 class SourceType(str, Enum):
     """How a dataset's tile positions are obtained (see axio_stitching.tile_sources)."""
     ZEISS = "zeiss"
+    KEYENCE = "keyence"
     FIJI = "fiji"
     OME = "ome"
     EXPLICIT = "explicit"

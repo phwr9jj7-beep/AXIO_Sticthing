@@ -401,6 +401,7 @@ The pipeline is **not** Zeiss-only. A `source` may be any of:
 
 | Source | What it is | Positions come from |
 |---|---|---|
+| Keyence BCF | `scan.bcf` or folder with `.bcf` | Keyence BCF stage coords & grid table (validated) |
 | Zeiss XML | `_info.xml` / `_meta.xml` | stage coordinates / meander grid |
 | Fiji config | `TileConfiguration.txt` (or `.registered.txt`) | pixel positions in the file |
 | OME-TIFF | tiles (or a folder) with `Plane PositionX/PositionY` | embedded stage metadata |
