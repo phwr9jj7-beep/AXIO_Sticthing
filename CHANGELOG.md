@@ -2,6 +2,20 @@
 
 All notable changes to AXIO Stitching Studio.
 
+## 1.2.1 — 2026-09-15
+
+Robustness and compatibility release for Keyence All-in-One Microscopy datasets.
+
+- **Universal Dynamic Keyence BCF Record Stride**:
+  - Upgraded the Keyence `.bcf` `ImageList/FileList` binary parser from a fixed 58-byte record size to adaptive dual-mode decoding:
+    - **Uniform-stride detection**: Automatically calculates the exact record size from `(file_list_len - 4) // count` when records have uniform filename lengths (e.g. 57-byte records for 23-character filenames, 58-byte records for 24-character filenames).
+    - **Sequential variable-length fallback**: Parses individual records dynamically by tracking channel name and filename lengths with 64-bit trailing metadata offsets.
+  - Fixes `TileSourceError: corrupted FileList` on Keyence datasets with non-24-character tile filenames (e.g., `MC_D1_No1`, `MC_D1_No2`, `MC_D1_No3`).
+- **Hardware Preset Configuration**:
+  - Added [`presets/keyence_brightfield_profile.json`](file:///e:/Oohashi3DWholeBrainProj/AXIO_Sticthing/presets/keyence_brightfield_profile.json) documenting the complete validated hardware parameters, stage coordinate equations, pixel calibration ($0.7549\,\mu\text{m/px}$ for 10x PlanFluor Ph1), output formats, and CLI invocation template for future automated batch runs.
+- **Empirical Validation**:
+  - Successfully stitched and verified `MC_D1_No1`, `MC_D1_No2`, and `MC_D1_No3` (3,723 tiles each, 51×73 grid, ~4.90 Gigapixels each, 66,887 × 73,278 pixels) with zero seam artifacts.
+
 ## 1.2.0 — 2026-09-14
 
 Major feature release: native Keyence All-in-One microscopy support and automated ImageJ compatibility layer.

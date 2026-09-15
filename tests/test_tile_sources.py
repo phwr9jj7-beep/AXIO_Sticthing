@@ -452,6 +452,32 @@ class TestKeyence:
         r = resolve_tiles(bcf)
         assert SourceType(r.source_type) == SourceType.KEYENCE
 
+    def test_variable_stride_filelist(self, tmp_path):
+        import zipfile
+        import struct
+        bcf_path = tmp_path / "variable.bcf"
+        with zipfile.ZipFile(bcf_path, "w") as z:
+            z.writestr("GroupFileProperty/ImageJoint/properties.xml", '<Store><Row>2</Row><Column>2</Column></Store>')
+            file_list = bytearray()
+            file_list += struct.pack("<I", 2)
+            # 23-byte filenames -> 57-byte records
+            for fn, r, c in [("MC_D1_No2_00001_CH4.tif", 0, 0), ("MC_D1_No2_00002_CH4.tif", 0, 1)]:
+                rec = bytearray()
+                rec.append(8)
+                rec.extend(b"Channel4")
+                rec.extend(b"\x00" * 8)
+                rec.extend(struct.pack("<ii", r, c))
+                fn_b = fn.encode("latin1")
+                rec.append(len(fn_b))
+                rec.extend(fn_b)
+                rec.extend(struct.pack("<d", 4.2353))
+                file_list += rec
+            z.writestr("GroupFileProperty/ImageList/FileList", bytes(file_list))
+        r = resolve_tiles(bcf_path)
+        assert r.total_tiles == 2
+        assert r.scenes[0][0]["filename"] == "MC_D1_No2_00001_CH4.tif"
+        assert r.scenes[0][1]["filename"] == "MC_D1_No2_00002_CH4.tif"
+
     def test_skill_render_includes_keyence(self):
         from axio_stitching.agent_integration import render_installed_skill
         skill_text = render_installed_skill()

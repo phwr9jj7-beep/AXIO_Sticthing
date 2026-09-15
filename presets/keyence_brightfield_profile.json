@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "keyence_brightfield_profile",
+  "title": "Keyence All-in-One Brightfield Stitching Preset",
+  "description": "Validated hardware coordinate stitching profile for Keyence BZ-X .bcf tile-scans",
+  "version": "1.2.0",
+  "microscope": {
+    "manufacturer": "Keyence",
+    "series": "BZ-X All-in-One Microscopy",
+    "metadata_format": ".bcf (ZIP archive containing XML properties and FileList)",
+    "lens": "PlanFluor DL 10x 0.30/15.20mm Ph1",
+    "nominal_magnification": 10,
+    "calibrated_pixel_size_um": 0.7548835833333334
+  },
+  "tile_geometry": {
+    "tile_width_px": 1920,
+    "tile_height_px": 1440,
+    "channels": 1,
+    "bit_depth": 8,
+    "typical_grid_shape": {
+      "rows": 73,
+      "columns": 51,
+      "total_tiles": 3723
+    }
+  },
+  "stitching_parameters": {
+    "source_type": "keyence",
+    "algorithm": "coordinate",
+    "correction": "none",
+    "alignment_mode": "reference",
+    "z_mode": "none",
+    "coordinate_source": "hardware_stage_edge_points",
+    "pitch_calculation": {
+      "dx_nm": "abs(EdgePoint1.X - EdgePoint0.X)",
+      "dy_nm": "abs(EdgePoint0.Y - EdgePoint3.Y)",
+      "step_x_px": "(dx_nm / (columns - 1)) / 1000.0 / cal_um",
+      "step_y_px": "(dy_nm / (rows - 1)) / 1000.0 / cal_um"
+    },
+    "y_axis_orientation": "inverted (stage coordinate Y aligns with image matrix row)"
+  },
+  "output_specifications": {
+    "full_resolution_mosaic": {
+      "pattern": "stitched_scene{scene}_coordinate.tif",
+      "format": "BigTIFF",
+      "compression": "deflate",
+      "description": "Full uncompressed/lossless ~4.9 Gigapixel mosaic for Fiji Bio-Formats (virtual stack), QuPath, Napari, ASAP"
+    },
+    "imagej_overview": {
+      "pattern": "stitched_scene{scene}_coordinate_imagej_ds2.tif",
+      "format": "Standard TIFF",
+      "downscale_factor": 2,
+      "max_file_size_bytes": 4294967296,
+      "description": "Downsampled <4GB overview for direct drag-and-drop viewing in standard ImageJ without plugins"
+    },
+    "preview_thumbnail": {
+      "pattern": "stitched_scene{scene}_coordinate_preview.png",
+      "format": "PNG",
+      "max_dimension_px": 2048,
+      "description": "High resolution thumbnail for rapid visual QC"
+    }
+  },
+  "reproducible_cli_command": "python -m axio_stitching.cli stitch --source \"<INPUT_FOLDER>\" --out-dir \"<OUTPUT_FOLDER>\" --algorithm coordinate --correction none",
+  "reproducible_python_api": {
+    "code": "from pathlib import Path\nfrom axio_stitching.models import StitchConfig, StitchAlgorithm, CorrectionMethod\nfrom axio_stitching.engine import StitchingEngine\n\nconfig = StitchConfig(\n    source=Path(r'<INPUT_FOLDER>'),\n    out_dir=Path(r'<OUTPUT_FOLDER>'),\n    algorithm=StitchAlgorithm.COORDINATE,\n    correction=CorrectionMethod.NONE,\n)\nresult = StitchingEngine(config).run()"
+  }
+}

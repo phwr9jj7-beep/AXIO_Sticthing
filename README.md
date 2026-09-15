@@ -9,7 +9,7 @@
 [![PyPI](https://img.shields.io/pypi/v/axio-stitching.svg)](https://pypi.org/project/axio-stitching/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![UI: PySide6](https://img.shields.io/badge/UI-PySide6-green.svg)](https://wiki.qt.io/Qt_for_Python)
-[![Tests](https://img.shields.io/badge/tests-359%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-360%20passing-brightgreen.svg)](tests/)
 
 **High-throughput microscopy tile-scan stitching — Zeiss, Keyence, and vendor-neutral — as a desktop app, a CLI, and an AI-agent tool server.**
 
@@ -43,28 +43,30 @@ graph TD
         S1[Zeiss _info.xml / _meta.xml]
         S2[Fiji TileConfiguration.txt]
         S3[OME-TIFF stage positions]
-        S4[positions .json]
-        S5[tile folder with grid filenames]
+        S4[Positions .json]
+        S5[Folder of TIFFs]
     end
-    S0 & S1 & S2 & S3 & S4 & S5 --> TS[tile_sources - vendor-neutral resolution]
-    TS --> E[StitchingEngine]
-    E -->|corrects| C[BaSiCPy / Median / Spatial]
-    E -->|registers| R[Phase Correlation / SIFT global solve / Stage Coordinates]
-    E -->|assembles| O[Feather-blended BigTIFF + ImageJ <4GB overview + preview PNG]
-    subgraph "Surfaces (one engine, identical results)"
-        GUI[PySide6 GUI] --> E
-        CLI[axio CLI] --> E
-        MCP[MCP server - 17 typed tools] --> E
-    end
-    MCP -.->|axio agent install| AG[Claude Code / ChatGPT-Codex / Antigravity / Claude Desktop / Gemini CLI]
+    S0 --> D[Auto-detection & validation]
+    S1 --> D
+    S2 --> D
+    S3 --> D
+    S4 --> D
+    S5 --> D
+    D --> E[Stitching Engine]
+    E --> C[Shading Correction: BaSiCPy / Median / Spatial]
+    C --> R[Global Registration: Phase / SIFT / Stage Coordinates]
+    R --> B[Blending: Linear / Feather / Maximum]
+    B --> O[ImageJ-compatible multi-channel / 3D TIFF]
 ```
 
 ### 🔬 Keyence All-in-One Microscopy (.bcf) — Validated, Confirmed & Tested
 
 Native support for **Keyence All-in-One microscopy brightfield tile-scans** is **fully validated, confirmed, and tested**:
 - **Zero manual configuration**: Point `--source` directly at a Keyence `.bcf` container file or its enclosing raw image folder.
-- **Direct hardware geometry extraction**: Parses the Keyence `.bcf` archive to read exact stage coordinates, scan grid geometry, pixel calibration (e.g. $0.75488\,\mu\text{m/px}$ for PlanFluor DL 10x Ph1), and individual tile mappings from the embedded binary property tables (`ImageList/FileList` and `ImageJoint/EdgePoint`).
-- **Gigapixel-scale benchmarked**: Empirically tested on massive multi-tile brightfield scans containing **3,650 tiles** per scene (**~4.87 Gigapixels**, 66,452 × 73,277 pixels), stitching in ~8 minutes per dataset (~9.2 tiles/sec).
+- **Universal Dynamic BCF Parsing**: Automatically handles arbitrary tile filename lengths and binary record strides (both uniform-stride detection e.g. 57-byte or 58-byte records, and dynamic sequential variable-length decoding).
+- **Direct hardware geometry extraction**: Parses the Keyence `.bcf` archive to read exact stage coordinates, scan grid geometry, pixel calibration (e.g. $0.75488\,\mu\text{m/px}$ for PlanFluor DL 10x Ph1), and individual tile mappings from the embedded property tables (`ImageList/FileList` and `ImageJoint/EdgePoint`).
+- **Gigapixel-scale benchmarked**: Empirically tested on massive multi-tile brightfield scans containing **3,650 to 3,723 tiles** per scene (**~4.87 to ~4.90 Gigapixels**, 66,452 × 73,277 to 66,887 × 73,278 pixels), stitching in ~8–9 minutes per dataset (~11–12.5 tiles/sec).
+- **Reusable Hardware Presets**: Pre-configured hardware profiles are saved in [`presets/keyence_brightfield_profile.json`](presets/keyence_brightfield_profile.json) for 1-click execution.
 - **Automated ImageJ Compatibility Layer**: Gigapixel canvases exceeding 4 GB are saved as 64-bit BigTIFF, while an automated downsampled `<4 GB` overview (`*_imagej_dsN.tif`) is generated concurrently so standard 32-bit ImageJ / Fiji can open the result immediately via double-click without memory or format errors.
 
 Supporting subsystems the surfaces share: **doctor** (environment diagnosis with fixes),
@@ -78,7 +80,7 @@ verdict), **jobs** (background execution with journalling and orphan detection),
   OME-TIFF `PositionX/Y`, explicit positions, or filename-encoded grids, auto-detected with a
   confidence rating.
 - **Keyence BCF support (Validated & Tested)** — reverse-engineered `.bcf` parsing extracting
-  nanometer stage bounding boxes, grid pitch, calibration, and 58-byte binary tile records.
+  nanometer stage bounding boxes, grid pitch, calibration, and dynamic binary tile records.
 - **ImageJ <4 GB Compatibility Layer** — automated generation of downsampled ImageJ-compatible
   overview TIFFs (`*_imagej_dsN.tif`) alongside 64-bit BigTIFF mosaics, avoiding ImageJ
   32-bit format/memory limitations.

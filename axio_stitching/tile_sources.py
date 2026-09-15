@@ -460,27 +460,46 @@ def _from_keyence(
             raise TileSourceError(f"empty FileList in {path.name}")
 
         count = struct.unpack_from("<I", file_list_data, 0)[0]
-        record_size = 58
-        if len(file_list_data) < 4 + count * record_size:
-            raise TileSourceError(
-                f"corrupted FileList in {path.name}: expected {4 + count * record_size} bytes, "
-                f"got {len(file_list_data)}"
-            )
-
+        fl_len = len(file_list_data)
         scene_tiles: list[dict] = []
-        for i in range(count):
-            rec = file_list_data[4 + i * record_size : 4 + (i + 1) * record_size]
-            r = struct.unpack_from("<i", rec, 17)[0]
-            c = struct.unpack_from("<i", rec, 21)[0]
-            fn_len = rec[25]
-            fn = rec[26 : 26 + fn_len].decode("latin1").strip("\x00")
-            scene_tiles.append({
-                "filename": fn,
-                "x": float(c * step_x_px),
-                "y": float(r * step_y_px),
-                "w": tile_w,
-                "h": tile_h,
-            })
+        if count > 0 and (fl_len - 4) % count == 0 and (fl_len - 4) // count >= 27:
+            rec_size = (fl_len - 4) // count
+            for i in range(count):
+                rec = file_list_data[4 + i * rec_size : 4 + (i + 1) * rec_size]
+                r = struct.unpack_from("<i", rec, 17)[0]
+                c = struct.unpack_from("<i", rec, 21)[0]
+                fn_len = rec[25]
+                fn = rec[26 : 26 + fn_len].decode("latin1", errors="replace").strip("\x00")
+                scene_tiles.append({
+                    "filename": fn,
+                    "x": float(c * step_x_px),
+                    "y": float(r * step_y_px),
+                    "w": tile_w,
+                    "h": tile_h,
+                })
+        else:
+            offset = 4
+            for _ in range(count):
+                if offset >= fl_len:
+                    break
+                ch_len = file_list_data[offset]
+                offset += 1 + ch_len
+                if offset + 16 > fl_len:
+                    break
+                r, c = struct.unpack_from("<ii", file_list_data, offset + 8)
+                fn_len = file_list_data[offset + 16]
+                offset += 17
+                if offset + fn_len + 8 > fl_len:
+                    break
+                fn = file_list_data[offset : offset + fn_len].decode("latin1", errors="replace").strip("\x00")
+                offset += fn_len + 8
+                scene_tiles.append({
+                    "filename": fn,
+                    "x": float(c * step_x_px),
+                    "y": float(r * step_y_px),
+                    "w": tile_w,
+                    "h": tile_h,
+                })
 
     if not scene_tiles:
         raise TileSourceError(f"no tile records found in Keyence BCF {path.name}")
