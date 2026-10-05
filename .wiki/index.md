@@ -32,3 +32,7 @@ Welcome to the internal knowledge base for the Zeiss Axio Microscope stitching p
 - **Conda Environment**: [environment.yml](file:///e:/Oohashi3DWholeBrainProj/AXIO_Sticthing/environment.yml)
 - **Raw Datasets**: [00.RawData/](file:///e:/Oohashi3DWholeBrainProj/AXIO_Sticthing/00.RawData/)
 - **Stitched Outputs**: [02.Results/](file:///e:/Oohashi3DWholeBrainProj/AXIO_Sticthing/02.Results/)
+
+
+## Ecosystem direction
+- [[ecosystem-strategy]] — current mission, business stage, contribution and education boundaries (5 October 2026).

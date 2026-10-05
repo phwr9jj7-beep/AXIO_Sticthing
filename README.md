@@ -1,5 +1,7 @@
 <div align="center">
 
+> **Ecosystem direction · 5 October 2026:** [Current strategy and role](docs/AROS_STRATEGY.md). AROS is commercially prelaunch; this repository’s source and release records establish only their stated technical scope. The first business gate is repeated external value and sustainable paid delivery.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
   <img src="assets/logo.png" alt="AXIO Stitching Studio" width="580">
