@@ -80,3 +80,7 @@ This log registers daily developer and agent actions in the AXIO Stitching proje
 * **Action**: Relicensed from **MIT to BSD 3-Clause**, Copyright © 2026 BSGOU and OnoLab, across `LICENSE`, `pyproject.toml`, `CITATION.cff`, `README.md`, and `axio_stitching/__init__.py`. (PyPI 1.1.1 keeps its immutable MIT metadata; BSD-3 applies from 1.1.2 onward.)
 * **Action**: Corrected `CITATION.cff`/`pyproject.toml` repository URLs to `github.com/phwr9jj7-beep/AXIO_Sticthing`.
 * **Impact**: The pipeline is installable in one line anywhere, an AI agent can install and register it into itself, and the project carries clear institutional licensing.
+
+
+## 2026-10-05 — Ecosystem strategy alignment
+Linked current mission, prelaunch business model, evidence and education boundaries through [[ecosystem-strategy]]. No runtime or artifact changes.
