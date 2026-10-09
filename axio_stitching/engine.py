@@ -111,6 +111,12 @@ class StitchingEngine:
             for warning in resolved.warnings:
                 self._emit(5, f"  [warning] {warning}", PipelineStage.PARSING)
 
+            unsafe = _correction_path_problem(cfg.correction.value, resolved)
+            if unsafe:
+                self._emit(0, f"[ERROR] {unsafe}", PipelineStage.FAILED)
+                return StitchResult(success=False, error_message=unsafe,
+                                    duration_seconds=time.time() - start)
+
             target_scenes = (
                 [cfg.scene] if cfg.scene is not None else sorted(scenes_raw.keys())
             )
@@ -322,6 +328,9 @@ class StitchingEngine:
                 resolved = self._resolve_source()
                 scenes_raw = resolved.scenes
                 warnings.extend(resolved.warnings)
+                unsafe = _correction_path_problem(cfg.correction.value, resolved)
+                if unsafe:
+                    errors.append(unsafe)
                 if not scenes_raw:
                     errors.append("No scenes could be resolved from the source.")
                 else:
@@ -481,6 +490,39 @@ class StitchingEngine:
                     self._emit(95, f"[SUCCESS] Stitched scene {scene_idx} saved at: {out_path}", PipelineStage.OUTPUT)
 
         return output_paths, preview_paths
+
+
+# ---------------------------------------------------------------------------
+# Source checks shared by run() and validate_config()
+# ---------------------------------------------------------------------------
+
+def _correction_path_problem(correction: str, resolved: ResolvedSource) -> str | None:
+    """
+    Why a shading correction cannot run on this source, or None when it can.
+
+    Corrected tiles are named after the tile names. Names that are absolute paths outside one
+    tile directory cannot be mapped into the correction directory safely (joined naively they
+    resolve onto the raw tiles), so such a run is refused before anything is written.
+    """
+    if correction == "none":
+        return None
+    if resolved.external_paths:
+        return (
+            f"correction='{correction}' cannot run on this source: its tile paths could not be "
+            "made relative to one tile directory, so corrected tiles could not be named safely "
+            "(they would resolve onto the raw tiles). Keep the tiles under one directory, or "
+            "use correction='none'."
+        )
+    for tiles in resolved.scenes.values():
+        for t in tiles:
+            name = Path(t["filename"])
+            if name.is_absolute() or name.drive:
+                return (
+                    f"correction='{correction}' cannot run on this source: tile name "
+                    f"{t['filename']!r} is an absolute path, and the corrected copy would "
+                    "resolve onto the raw tile. Use relative tile names, or correction='none'."
+                )
+    return None
 
 
 # ---------------------------------------------------------------------------
