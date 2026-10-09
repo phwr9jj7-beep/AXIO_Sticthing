@@ -45,6 +45,10 @@ the error on 43 real BZ-X scans and traced it to the source.
   `max_tiles` (200) tiles instead of returning ~0.9 MB of JSON for a 3,723-tile scan
   (`summary_only=False` / `axio inspect --full` for everything); the Keyence stage model is
   part of the report.
+- **QC can read full-resolution mosaics again.** AXIO writes BigTIFF mosaics (> 4 GB) with one
+  row per strip; the streaming reader squeezed each 1 x W strip to 1-D and skipped it, so
+  `axio_qc_report` returned "no pixel data could be decoded" for every full-resolution
+  Keyence mosaic (only the `*_imagej_dsN` overviews could be checked).
 - `median` correction no longer requires BaSiCPy (it never used it; `axio doctor` already
   recommended median as the BaSiCPy-free option).
 - Coordinate mode no longer logs "Using coordinates directly from Zeiss stage limits." for

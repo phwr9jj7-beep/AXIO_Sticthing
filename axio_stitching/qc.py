@@ -222,9 +222,14 @@ def _iter_page_blocks(page: "tifffile.TiffPage", accumulator: _Accumulator) -> s
         if data is None:
             continue
         used_segments = True
-        block = np.squeeze(np.asarray(data))
-        if block.ndim > 2:
-            block = block.reshape(-1, block.shape[-2], block.shape[-1])[0]
+        # tifffile decodes a segment as (depth, rows, cols, samples). Index it rather than
+        # squeezing: AXIO writes full-resolution BigTIFF mosaics with ONE ROW PER STRIP, and a
+        # squeezed 1 x W strip became 1-D and was skipped, so QC on those files decoded nothing.
+        block = np.asarray(data)
+        if block.ndim == 4:
+            block = block[0, :, :, 0]
+        elif block.ndim == 3:
+            block = block[0] if block.shape[0] == 1 else block[..., 0]
         if block.ndim != 2:
             continue
         y_off, x_off = int(index[2]), int(index[3])

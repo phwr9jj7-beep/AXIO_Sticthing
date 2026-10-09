@@ -165,3 +165,23 @@ class TestListOutputs:
         (stitched_tiff.parent / "stitched_broken.tif").write_bytes(b"not a tiff")
         names = {entry["name"] for entry in list_outputs(stitched_tiff.parent)}
         assert names == {stitched_tiff.name, "stitched_broken.tif"}
+
+
+class TestOneRowStrips:
+    """AXIO's full-resolution BigTIFF mosaics have ONE ROW PER STRIP (regression, 1.2.1)."""
+
+    def test_streamed_one_row_strips_are_decoded(self, tmp_path, monkeypatch):
+        import axio_stitching.qc as qc_mod
+
+        rng = np.random.default_rng(5)
+        canvas = (rng.random((300, 400)) * 30000 + 100).astype(np.uint16)
+        path = tmp_path / "stitched_scene0_coordinate.tif"
+        tifffile.imwrite(str(path), canvas, bigtiff=True, photometric="minisblack",
+                         compression="deflate", rowsperstrip=1)
+        full = qc_report(path)
+        monkeypatch.setattr(qc_mod, "STREAM_THRESHOLD_PIXELS", 1000)
+        streamed = qc_report(path)
+        assert streamed.ok, streamed.error
+        assert streamed.method == "streamed"
+        assert streamed.metrics["mean"] == full.metrics["mean"]
+        assert streamed.metrics["seam_prominence_x"] == full.metrics["seam_prominence_x"]
