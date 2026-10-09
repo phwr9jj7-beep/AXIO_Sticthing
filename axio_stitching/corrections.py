@@ -37,6 +37,73 @@ def _log(message: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Output-path safety
+# ---------------------------------------------------------------------------
+
+class CorrectionPathError(ValueError):
+    """A corrected tile would be written outside the correction directory or onto its source."""
+
+
+def _norm(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def _is_inside(child: Path, parent: Path) -> bool:
+    c, p = _norm(child), _norm(parent)
+    return c == p or c.startswith(p.rstrip(os.sep + "/") + os.sep)
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    if _norm(a) == _norm(b):
+        return True
+    try:
+        return a.exists() and b.exists() and os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def corrected_tile_path(out_dir: Path, raw_dir: Path, filename: str) -> Path:
+    """
+    Where the corrected copy of ``filename`` goes — or a :class:`CorrectionPathError`.
+
+    Tile names are joined onto ``out_dir``. ``pathlib`` silently DROPS the left operand when
+    the right one is absolute, so an absolute tile name (common in hand-written positions
+    JSONs) would turn ``out_dir / name`` into the raw tile itself: the "already corrected"
+    check then sees the raw file and skips the correction, and only an existence check stands
+    between the writer and the raw data. Every output path is therefore checked to be a
+    RELATIVE name that stays inside ``out_dir`` and is not the source tile.
+    """
+    rel = Path(filename)
+    if rel.is_absolute() or rel.drive or rel.root:
+        raise CorrectionPathError(
+            f"refusing to write a corrected tile for the absolute tile path {filename!r}: "
+            "correction outputs are named after the tile, so the tile names must be relative "
+            "to the tile directory. Use relative names (or put the positions file next to the "
+            "tiles), or use correction='none'."
+        )
+    out_p = Path(os.path.abspath(Path(out_dir) / rel))
+    if not _is_inside(out_p, Path(out_dir)) or _norm(out_p) == _norm(out_dir):
+        raise CorrectionPathError(f"refusing to write outside {out_dir}: {out_p}")
+    if _same_file(out_p, Path(raw_dir) / rel):
+        raise CorrectionPathError(
+            f"refusing to overwrite the source tile {out_p}: the correction directory resolves "
+            "to the tile directory"
+        )
+    return out_p
+
+
+def _preflight_output_paths(raw_dir: Path, filenames: list[str], out_dir: Path) -> None:
+    """Fail BEFORE any flatfield is fitted if a single output path would be unsafe."""
+    if _same_file(Path(out_dir), Path(raw_dir)) or _norm(out_dir) == _norm(raw_dir):
+        raise CorrectionPathError(
+            f"the correction output directory {out_dir} is the tile directory; corrected tiles "
+            "would overwrite the raw tiles"
+        )
+    for fn in filenames:
+        corrected_tile_path(out_dir, raw_dir, fn)
+
+
+# ---------------------------------------------------------------------------
 # Public interface
 # ---------------------------------------------------------------------------
 
@@ -66,11 +133,26 @@ def run_correction(
             _log(f"[STATUS] {msg}")
             _log(f"[PROGRESS] {percent}")
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-
     if method == "none":
         _progress(50, "Shading correction skipped. Stitching on raw tiles.")
         return raw_dir
+
+    # Path safety first, before any directory is created or any flatfield is fitted.
+    if ref_tag:
+        names = [
+            t["filename"].replace(ref_tag, tag)
+            for tag in [ref_tag] + list(target_tags or [])
+            for t in tile_list
+        ]
+    else:
+        names = [t["filename"] for t in tile_list]
+    _preflight_output_paths(Path(raw_dir), names, Path(out_dir))
+    if _is_inside(Path(out_dir), Path(raw_dir)):
+        _progress(1, f"[warning] corrected tiles will be written inside the tile directory "
+                     f"({out_dir}); the raw tiles are not modified, but consider an out_dir "
+                     "outside the raw data.")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     if method == "basicpy":
         os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -119,14 +201,18 @@ def _run_split_channel_correction(
         progress_fn(0, f"Processing shading correction ({method}) for tag '{tag}'...")
 
         tag_tiles = [t["filename"].replace(ref_tag, tag) for t in tile_list]
-        todo_tiles = [fn for fn in tag_tiles if not (out_dir / fn).exists()]
+        todo_tiles = [fn for fn in tag_tiles
+                      if not corrected_tile_path(out_dir, raw_dir, fn).exists()]
 
         if not todo_tiles:
-            progress_fn(0, f"Corrected files for tag '{tag}' already exist. Skipping.")
+            progress_fn(0, f"[warning] all {len(tag_tiles)} corrected tiles for tag '{tag}' "
+                           f"already exist in {out_dir}; reusing them. Delete that folder to "
+                           "recompute the correction.")
             continue
 
         if method in ["basicpy", "median"]:
-            from basicpy import BaSiC
+            if method == "basicpy":  # median needs only numpy/scipy
+                from basicpy import BaSiC
 
             np.random.seed(42)
             sample_size = min(len(tag_tiles), 300)
@@ -163,7 +249,7 @@ def _run_split_channel_correction(
             n_tiles = len(tag_tiles)
             for idx, fn in enumerate(tag_tiles):
                 in_p = raw_dir / fn
-                out_p = out_dir / fn
+                out_p = corrected_tile_path(out_dir, raw_dir, fn)
                 if not in_p.exists() or out_p.exists():
                     continue
 
@@ -178,6 +264,7 @@ def _run_split_channel_correction(
                     corrected = np.clip(corrected, 0, 255).astype(np.uint8)
                 else:
                     corrected = np.clip(corrected, 0, 65535).astype(np.uint16)
+                out_p.parent.mkdir(parents=True, exist_ok=True)
                 tifffile.imwrite(str(out_p), corrected, compression="deflate")
 
                 if idx % max(1, n_tiles // 20) == 0:
@@ -191,7 +278,7 @@ def _run_split_channel_correction(
             n_tiles = len(tag_tiles)
             for idx, fn in enumerate(tag_tiles):
                 in_p = raw_dir / fn
-                out_p = out_dir / fn
+                out_p = corrected_tile_path(out_dir, raw_dir, fn)
                 if not in_p.exists() or out_p.exists():
                     continue
 
@@ -208,6 +295,7 @@ def _run_split_channel_correction(
                     corrected = np.clip(corrected, 0, 255).astype(np.uint8)
                 else:
                     corrected = np.clip(corrected, 0, 65535).astype(np.uint16)
+                out_p.parent.mkdir(parents=True, exist_ok=True)
                 tifffile.imwrite(str(out_p), corrected, compression="deflate")
 
                 if idx % max(1, n_tiles // 20) == 0:
@@ -241,12 +329,15 @@ def _run_stack_correction(
     axes_str = sample_info["axes"]
     channel_axis = axes_str.find("C") if "C" in axes_str else None
 
-    if all((out_dir / t["filename"]).exists() for t in tile_list):
-        progress_fn(50, f"Corrected stack files ({method}) already exist. Skipping.")
+    if all(corrected_tile_path(out_dir, raw_dir, t["filename"]).exists() for t in tile_list):
+        progress_fn(50, f"[warning] all {len(tile_list)} corrected tiles ({method}) already "
+                        f"exist in {out_dir}; reusing them. Delete that folder to recompute "
+                        "the correction.")
         return
 
     if method in ["basicpy", "median"]:
-        from basicpy import BaSiC
+        if method == "basicpy":  # median needs only numpy/scipy
+            from basicpy import BaSiC
 
         progress_fn(0, f"Multi-page stack detected with {num_channels} channels. Fitting flatfield for each channel...")
         flatfields = []
@@ -288,7 +379,7 @@ def _run_stack_correction(
         n_tiles = len(tile_list)
         for idx, t in enumerate(tile_list):
             in_p = raw_dir / t["filename"]
-            out_p = out_dir / t["filename"]
+            out_p = corrected_tile_path(out_dir, raw_dir, t["filename"])
             if not in_p.exists() or out_p.exists():
                 continue
 
@@ -315,6 +406,7 @@ def _run_stack_correction(
                 corrected_stack = np.stack(corrected_channels, axis=2)
                 axes_meta = "YXC"
 
+            out_p.parent.mkdir(parents=True, exist_ok=True)
             tifffile.imwrite(
                 str(out_p), corrected_stack,
                 compression="deflate",
@@ -330,7 +422,7 @@ def _run_stack_correction(
         n_tiles = len(tile_list)
         for idx, t in enumerate(tile_list):
             in_p = raw_dir / t["filename"]
-            out_p = out_dir / t["filename"]
+            out_p = corrected_tile_path(out_dir, raw_dir, t["filename"])
             if not in_p.exists() or out_p.exists():
                 continue
 
@@ -359,6 +451,7 @@ def _run_stack_correction(
                 corrected_stack = np.stack(corrected_channels, axis=2)
                 axes_meta = "YXC"
 
+            out_p.parent.mkdir(parents=True, exist_ok=True)
             tifffile.imwrite(
                 str(out_p), corrected_stack,
                 compression="deflate",

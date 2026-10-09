@@ -33,7 +33,8 @@ Every run-shaped tool (`axio_estimate_stitch`, `axio_validate_stitch`, `axio_sta
 | `grid_cols` | int | — | — | Column count when `grid` filenames carry a linear position index (e.g. `Position012`). |
 | `pixel_size_um` | float | — | — | Micrometres per pixel, to convert stage-unit (`ome`/`explicit`) positions to pixels. |
 | `out_dir` | string | *required* | — | Where stitched TIFFs, previews and correction intermediates are written. Created if absent. |
-| `correction` | string | `basicpy` | `basicpy`, `median`, `spatial`, `none` | Shading / flatfield correction applied to every tile before registration. |
+| `correction` | string | `auto` | `auto`, `basicpy`, `median`, `spatial`, `none` | Shading / flatfield correction applied to every tile before registration. `auto`: Keyence → `none`, other sources → `basicpy`. |
+| `keyence_step` | string | `auto` | `auto`, `measured`, `edgepoints`, `overlap` | Keyence `.bcf` only: how the tile step is obtained. `auto` measures it from neighbouring tiles (falls back to the corner points with a warning); `measured` fails instead; `edgepoints` reproduces AXIO ≤ 1.2.1 (≈2.3 % short on BZ-X); `overlap` = `tile * (1 - overlap)`. |
 | `algorithm` | string | `phase` | `phase`, `sift`, `coordinate` | How tile positions are determined. |
 | `scene` | int \| null | `null` | ≥ 0 | Restrict to one scene (0-based). `null` processes every scene in sequence. |
 | `ref_channel` | int | `0` | ≥ 0 | For **multi-page** tiles: which channel inside each tile TIFF registration is computed on. |
