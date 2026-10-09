@@ -866,7 +866,7 @@ def axio_read_preview(path: str):
 
 
 @mcp.tool()
-def axio_qc_report(path: str, frame: int | None = None) -> str:
+def axio_qc_report(path: str, frame: int | None = None, positions: str = "") -> str:
     """
     Measure a stitched mosaic: how much of it is empty, how much is clipped, where the signal
     sits, and whether hard seams run across it.
@@ -881,11 +881,17 @@ def axio_qc_report(path: str, frame: int | None = None) -> str:
         not a stitching one.
       * seam_prominence_x / _y - strongest gradient ridge over the typical gradient. ~1 is
         clean; >= 3 means visible seams; >= 6 means registration did not converge.
+      * ghost_excess_x / _y - double images in the tile OVERLAP zones, the signature of a
+        wrong tile step (invisible to the seam metric because blending hides the edge).
+        ~0 clean; >= 0.05 suspicious; >= 0.15 ghosted, offset = ghost_lag_*. Needs the tile
+        layout: the <mosaic>_positions.json sidecar of AXIO >= 1.3 is found automatically
+        (also for the *_imagej_dsN overview); for older mosaics pass `positions`.
       * findings - the same numbers stated as actionable sentences.
 
     Args:
         path: Path to a stitched .tif.
         frame: Page index for a multi-channel / Z-stack file. Default: the middle page.
+        positions: Optional tile layout (positions JSON) for the ghost test.
 
     Returns:
         JSON with keys: ok, width, height, dtype, axes, method ('full'|'streamed'),
@@ -893,7 +899,7 @@ def axio_qc_report(path: str, frame: int | None = None) -> str:
     """
     from .qc import qc_report
 
-    return _json(qc_report(path, frame=frame).to_dict())
+    return _json(qc_report(path, frame=frame, positions=positions or None).to_dict())
 
 
 @mcp.tool()

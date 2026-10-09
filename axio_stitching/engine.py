@@ -17,6 +17,9 @@ Design notes:
 
 from __future__ import annotations
 
+import datetime as _dt
+import hashlib
+import json
 import os
 import re
 import sys
@@ -64,15 +67,42 @@ class StitchingEngine:
     # -----------------------------------------------------------------------
 
     def run(self) -> StitchResult:
-        """Execute the full stitching pipeline synchronously. Returns a StitchResult."""
+        """
+        Execute the full stitching pipeline synchronously. Returns a StitchResult.
+
+        Whatever the outcome, ``<out_dir>/run_manifest.json`` records the tool version, the
+        resolved configuration, the source (incl. a Keyence stage model), per-stage timings,
+        warnings and outputs; each mosaic gets a ``<stem>_positions.json`` sidecar with the
+        tile positions in canvas pixels (used by ``axio_qc_report``'s ghost test).
+        """
+        started = time.time()
+        self._resolved: ResolvedSource | None = None
+        self._stage_seconds: dict[str, float] = {}
+        self._sidecars: dict[str, str] = {}
+        self._last_mark = started
+        result = self._run()
+        try:
+            result.run_manifest = self._write_run_manifest(result, started)
+        except Exception as exc:  # noqa: BLE001 - provenance must never fail a stitch
+            self._emit(100 if result.success else 0,
+                       f"[warning] could not write run_manifest.json: {exc}", PipelineStage.OUTPUT)
+        return result
+
+    def _mark(self, stage: str) -> None:
+        now = time.time()
+        self._stage_seconds[stage] = round(self._stage_seconds.get(stage, 0.0) + now - self._last_mark, 3)
+        self._last_mark = now
+
+    def _run(self) -> StitchResult:
         start = time.time()
         cfg = self.config
 
         self._emit(1, "Starting stitching runner...", PipelineStage.INIT)
         self._emit(1, f"Dataset Source    : {cfg.source_path}", PipelineStage.INIT)
         self._emit(1, f"Output Directory  : {cfg.out_dir}", PipelineStage.INIT)
-        self._emit(1, f"Correction        : {cfg.correction.value}", PipelineStage.INIT)
-        self._emit(1, f"Algorithm         : {cfg.algorithm.value}", PipelineStage.INIT)
+        auto = cfg.resolved_defaults or {}
+        self._emit(1, f"Correction        : {auto.get('correction', cfg.correction.value)}", PipelineStage.INIT)
+        self._emit(1, f"Algorithm         : {auto.get('algorithm', cfg.algorithm.value)}", PipelineStage.INIT)
         self._emit(1, f"Downsample        : 1x (Full Resolution Enforced)", PipelineStage.INIT)
         self._emit(1, f"Reference Channel : {cfg.ref_channel}", PipelineStage.INIT)
         self._emit(1, f"Reference Tag     : {cfg.ref_tag}", PipelineStage.INIT)
@@ -90,6 +120,8 @@ class StitchingEngine:
                 resolved = self._resolve_source()
             except TileSourceError as exc:
                 return StitchResult(success=False, error_message=str(exc))
+            self._resolved = resolved
+            self._mark("resolve")
 
             scenes_raw = resolved.scenes
             raw_dir = resolved.raw_dir
@@ -158,6 +190,7 @@ class StitchingEngine:
                     )
                 else:
                     correction_dir = raw_dir
+                self._mark("correction")
 
                 # ----- Step 3: Alignment ---------------------------------------
                 positions = compute_alignment(
@@ -169,6 +202,8 @@ class StitchingEngine:
                     ref_z_slice=cfg.ref_z_slice,
                     progress_callback=self._progress,
                 )
+
+                self._mark("alignment")
 
                 # ----- Step 4: Canvas assembly ---------------------------------
                 self._emit(80, "Blending tiles and building output canvas...", PipelineStage.CANVAS)
@@ -225,6 +260,12 @@ class StitchingEngine:
                     z_slices_to_stitch=z_slices_to_stitch,
                     stitching_z_mode=stitching_z_mode,
                 )
+                self._mark("canvas")
+                for out_path in scene_outputs:
+                    sidecar = _write_positions_sidecar(
+                        out_path, positions, tile_w=tile_w, tile_h=tile_h, scene_idx=scene_idx,
+                    )
+                    self._sidecars[str(out_path)] = str(sidecar)
                 output_paths.extend(scene_outputs)
                 preview_paths.extend(scene_previews)
                 total_tiles_processed += len(ref_tiles)
@@ -247,6 +288,40 @@ class StitchingEngine:
                 error_message=str(exc),
                 duration_seconds=time.time() - start,
             )
+
+    def _write_run_manifest(self, result: StitchResult, started: float) -> Path | None:
+        cfg = self.config
+        if not cfg.out_dir.is_dir():
+            return None
+        finished = time.time()
+        resolved = self._resolved
+        manifest = {
+            "tool": {"name": "axio-stitching", "version": _axio_version()},
+            "started_at": _dt.datetime.fromtimestamp(started).astimezone().isoformat(timespec="seconds"),
+            "finished_at": _dt.datetime.fromtimestamp(finished).astimezone().isoformat(timespec="seconds"),
+            "duration_seconds": round(finished - started, 3),
+            "stage_seconds": self._stage_seconds,
+            "success": result.success,
+            "error_message": result.error_message,
+            "config": cfg.model_dump(mode="json"),
+            "source": resolved.to_dict() if resolved is not None else None,
+            "source_sha256": _sha256_small(cfg.source_path),
+            "outputs": [
+                {
+                    "path": str(p),
+                    "bytes": p.stat().st_size if Path(p).exists() else None,
+                    "positions_sidecar": self._sidecars.get(str(p)),
+                }
+                for p in result.output_paths
+            ],
+            "previews": [str(p) for p in result.preview_paths],
+            "python": sys.version.split()[0],
+        }
+        path = cfg.out_dir / "run_manifest.json"
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
+        os.replace(tmp, path)
+        return path
 
     def _resolve_source(self) -> ResolvedSource:
         """Resolve tile positions from the configured source (any supported format)."""
@@ -494,6 +569,52 @@ class StitchingEngine:
                     self._emit(95, f"[SUCCESS] Stitched scene {scene_idx} saved at: {out_path}", PipelineStage.OUTPUT)
 
         return output_paths, preview_paths
+
+
+# ---------------------------------------------------------------------------
+# Provenance: positions sidecar and run manifest
+# ---------------------------------------------------------------------------
+
+def _write_positions_sidecar(out_path: Path, positions: dict, *, tile_w: int, tile_h: int,
+                             scene_idx: int) -> Path:
+    """
+    Tile positions in the CANVAS pixels of ``out_path`` (top-left corners), exactly as
+    :func:`axio_stitching.canvas.stitch_canvas` placed them.
+    """
+    ys = [float(y) for y, _x in positions.values()]
+    xs = [float(x) for _y, x in positions.values()]
+    y_min, x_min = min(ys), min(xs)
+    payload = {
+        "axio_version": _axio_version(),
+        "scene": scene_idx,
+        "coordinates": "top-left corner of each tile in pixels of this mosaic (full resolution)",
+        "canvas": {"width": int((max(xs) - x_min) + tile_w), "height": int((max(ys) - y_min) + tile_h)},
+        "tile_width": int(tile_w),
+        "tile_height": int(tile_h),
+        "tiles": [
+            {"filename": fn, "x": int(float(x) - x_min), "y": int(float(y) - y_min),
+             "w": int(tile_w), "h": int(tile_h)}
+            for fn, (y, x) in positions.items()
+        ],
+    }
+    sidecar = out_path.with_name(out_path.stem + "_positions.json")
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+    return sidecar
+
+
+def _axio_version() -> str:
+    from . import __version__
+
+    return __version__
+
+
+def _sha256_small(path: Path, limit: int = 64 * 1024 * 1024) -> str | None:
+    try:
+        if path.is_file() and path.stat().st_size <= limit:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        pass
+    return None
 
 
 # ---------------------------------------------------------------------------

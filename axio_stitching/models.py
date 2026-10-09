@@ -307,6 +307,7 @@ class StitchResult(BaseModel):
     duration_seconds: float = 0.0
     scenes_processed: int = 0
     tiles_processed: int = 0
+    run_manifest: Path | None = None
     error_message: str | None = None
 
     def to_dict(self) -> dict:

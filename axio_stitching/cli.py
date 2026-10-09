@@ -444,12 +444,13 @@ def stitch(
 def qc(
     path: Path = typer.Argument(..., help="Stitched .tif to measure"),
     frame: Optional[int] = typer.Option(None, "--frame", help="Page index for a multi-channel / Z-stack file"),
+    positions: Optional[Path] = typer.Option(None, "--positions", help="Tile layout for the ghost test (default: the <mosaic>_positions.json sidecar)"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Measure a stitched mosaic: empty area, clipping, dynamic range, seam prominence."""
+    """Measure a stitched mosaic: empty area, clipping, dynamic range, seams, overlap ghosts."""
     from .qc import qc_report
 
-    report = qc_report(path, frame=frame)
+    report = qc_report(path, frame=frame, positions=positions)
     payload = report.to_dict()
     if _emit(payload, json_output):
         raise typer.Exit(0 if report.ok else 1)
@@ -467,6 +468,10 @@ def qc(
     table.add_row("Mean / std", f"{metrics['mean']} / {metrics['std']}")
     table.add_row("Range (p1..p99)", f"{metrics['percentiles']['p1']:.0f} .. {metrics['percentiles']['p99']:.0f}")
     table.add_row("Empty fraction", f"{metrics['empty_fraction']:.2%}")
+    for axis in ("x", "y"):
+        g = metrics.get(f"ghost_excess_{axis}")
+        table.add_row(f"Ghost excess {axis}",
+                      "n/a (no layout)" if g is None else f"{g:.3f} at {metrics.get(f'ghost_lag_{axis}')} px")
     table.add_row("Saturated fraction", f"{metrics['saturated_fraction']:.4%}")
     table.add_row("Seam prominence x / y", f"{metrics['seam_prominence_x']} / {metrics['seam_prominence_y']}")
     console.print("\n")
