@@ -82,8 +82,10 @@ class TestVocabularyTools:
         from axio_stitching.models import AlignmentMode, CorrectionMethod, StitchAlgorithm, ZMode
 
         payload = call_json(mcp_server.axio_list_algorithms)
-        assert payload["corrections"] == [m.value for m in CorrectionMethod]
-        assert payload["algorithms"] == [m.value for m in StitchAlgorithm]
+        # 'auto' is accepted everywhere and resolved by source type (StitchConfig validator).
+        assert payload["corrections"] == ["auto"] + [m.value for m in CorrectionMethod]
+        assert payload["algorithms"] == ["auto"] + [m.value for m in StitchAlgorithm]
+        assert payload["keyence_steps"] == ["auto", "measured", "edgepoints", "overlap"]
         assert payload["alignment_modes"] == [m.value for m in AlignmentMode]
         assert payload["z_modes"] == [m.value for m in ZMode]
 

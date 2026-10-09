@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, Field, model_validator, ConfigDict
 
@@ -34,6 +34,22 @@ class StitchAlgorithm(str, Enum):
     PHASE = "phase"
     SIFT = "sift"
     COORDINATE = "coordinate"
+
+
+#: Defaults applied when ``correction`` / ``algorithm`` are ``"auto"`` (or omitted), by the
+#: detected source type. Keyence BZ-X tile scans carry a measured stage model (see
+#: :mod:`axio_stitching.stage_model`) and are typically already flat in phase contrast, so
+#: they stitch on coordinates without a correction; everything else keeps the historical
+#: BaSiCPy + phase-correlation defaults.
+SOURCE_DEFAULTS: dict[str, tuple[str, str]] = {
+    "keyence": ("none", "coordinate"),
+}
+GENERIC_DEFAULTS: tuple[str, str] = ("basicpy", "phase")
+
+
+def source_defaults(source_type: str) -> tuple[str, str]:
+    """``(correction, algorithm)`` that ``"auto"`` resolves to for ``source_type``."""
+    return SOURCE_DEFAULTS.get(source_type, GENERIC_DEFAULTS)
 
 
 class AlignmentMode(str, Enum):
@@ -121,14 +137,25 @@ class StitchConfig(BaseModel):
     )
     out_dir: Path = Field(..., description="Directory where output files are saved")
 
-    # Algorithm selection
+    # Algorithm selection. "auto" (the default) resolves by source type: see source_defaults().
     correction: CorrectionMethod = Field(
         CorrectionMethod.BASICPY,
-        description="Illumination / shading correction method"
+        description="Illumination / shading correction method ('auto' = by source type)"
     )
     algorithm: StitchAlgorithm = Field(
         StitchAlgorithm.PHASE,
-        description="Tile registration algorithm"
+        description="Tile registration algorithm ('auto' = by source type)"
+    )
+    keyence_step: Literal["auto", "measured", "edgepoints", "overlap"] = Field(
+        "auto",
+        description="Keyence .bcf only: measure the tile step from neighbouring tiles ('auto', "
+                    "falls back to the corner points with a warning; 'measured' fails instead), "
+                    "or use the corner points ('edgepoints', AXIO <= 1.2.1) or a uniform "
+                    "overlap grid ('overlap').",
+    )
+    resolved_defaults: dict[str, str] = Field(
+        default_factory=dict,
+        description="Which settings were filled in by 'auto', and from which source type.",
     )
 
     # Scene / channel selection
@@ -190,6 +217,40 @@ class StitchConfig(BaseModel):
         if self.tile_width and self.tile_height:
             return self.tile_width, self.tile_height
         return None
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_auto_defaults(cls, data: Any) -> Any:
+        """Fill ``correction`` / ``algorithm`` given as "auto" (or omitted) by source type."""
+        if not isinstance(data, dict):
+            return data
+        wanted = [k for k in ("correction", "algorithm")
+                  if data.get(k) in (None, "", "auto")]
+        if not wanted:
+            return data
+        data = dict(data)
+        if data.get("positions"):
+            kind = "explicit"
+        else:
+            src = data.get("source") or data.get("xml_path")
+            kind = "unknown"
+            if src:
+                try:
+                    from .tile_sources import detect_source_type
+
+                    kind = detect_source_type(Path(src))
+                except Exception:  # noqa: BLE001 - detection is best-effort here
+                    kind = "unknown"
+        corr, algo = source_defaults(kind)
+        applied = dict(data.get("resolved_defaults") or {})
+        if "correction" in wanted:
+            data["correction"] = corr
+            applied["correction"] = f"{corr} (auto for {kind})"
+        if "algorithm" in wanted:
+            data["algorithm"] = algo
+            applied["algorithm"] = f"{algo} (auto for {kind})"
+        data["resolved_defaults"] = applied
+        return data
 
     @model_validator(mode="after")
     def validate_paths(self) -> "StitchConfig":

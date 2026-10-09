@@ -259,6 +259,7 @@ class StitchingEngine:
             serpentine=cfg.serpentine,
             tile_size=cfg.tile_size,
             pixel_size_um=cfg.pixel_size_um,
+            keyence_step=cfg.keyence_step,
         )
 
     def inspect_metadata(self) -> dict:
@@ -288,6 +289,9 @@ class StitchingEngine:
         payload["raw_dir"] = str(resolved.raw_dir)
         payload["notes"] = resolved.notes
         payload["warnings"] = resolved.warnings
+        payload["external_tile_paths"] = resolved.external_paths
+        if resolved.stage_model is not None:
+            payload["stage_model"] = resolved.stage_model
         return payload
 
     def validate_config(self) -> dict:
@@ -490,6 +494,47 @@ class StitchingEngine:
                     self._emit(95, f"[SUCCESS] Stitched scene {scene_idx} saved at: {out_path}", PipelineStage.OUTPUT)
 
         return output_paths, preview_paths
+
+
+# ---------------------------------------------------------------------------
+# Bounded inspect output
+# ---------------------------------------------------------------------------
+
+#: Scenes with more tiles than this are summarised by default in inspect output: a full
+#: 3,723-tile Keyence listing is ~0.9 MB of JSON, more than an agent's context can take in.
+INSPECT_MAX_TILES = 200
+
+
+def summarize_inspect(payload: dict, max_tiles: int = INSPECT_MAX_TILES, force: bool = False) -> dict:
+    """
+    Replace long per-scene tile lists by a summary (first/last tiles, bounding box, grid).
+
+    ``force`` summarises every scene regardless of size. The payload is modified in place
+    and returned; a summarised scene carries ``tiles_truncated: true``.
+    """
+    for scene in payload.get("scenes", []):
+        tiles = scene.get("tiles") or []
+        if not tiles or (len(tiles) <= max_tiles and not force):
+            continue
+        xs = [float(t["x"]) for t in tiles]
+        ys = [float(t["y"]) for t in tiles]
+        w = float(tiles[0].get("w") or 1)
+        h = float(tiles[0].get("h") or 1)
+        scene["tiles_total"] = len(tiles)
+        scene["tiles_truncated"] = True
+        scene["bounding_box"] = {
+            "x_min": min(xs), "y_min": min(ys),
+            "x_max": max(xs) + w, "y_max": max(ys) + h,
+        }
+        scene["grid_estimate"] = {
+            "columns": len({round(x / (w / 4)) for x in xs}),
+            "rows": len({round(y / (h / 4)) for y in ys}),
+        }
+        scene["tiles"] = tiles[:4] + tiles[-4:]
+    payload["tiles_listing"] = (
+        "summary" if any(s.get("tiles_truncated") for s in payload.get("scenes", [])) else "full"
+    )
+    return payload
 
 
 # ---------------------------------------------------------------------------

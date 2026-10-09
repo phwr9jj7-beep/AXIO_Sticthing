@@ -88,14 +88,24 @@ WORKFLOW (do not skip steps 1-3; each one prevents a failure mode that costs a w
   5. axio_start_stitch      - run in the BACKGROUND; poll with axio_job_status. A real scene
                               takes minutes to hours, so a synchronous call will time out.
   6. axio_read_preview / axio_qc_report - LOOK at the result before reporting success. A
-                              diverged registration still exits zero.
+                              diverged registration still exits zero, and a wrong tile step
+                              still looks fine in a thumbnail: read ghost_excess_x/_y (double
+                              images in overlap zones), not just seam prominence.
   7. axio_launch_gui        - hand the mosaic to the user in the desktop app.
 
 CHOOSING PARAMETERS
-  correction: basicpy (best, slow, needs basicpy) | median (good default for large sets)
-              | spatial (uneven background) | none (already flat, or iterating fast)
-  algorithm:  phase (default; fast, needs texture) | sift (low contrast or stage drift;
-              needs OpenCV) | coordinate (no registration; trust the stage - fastest)
+  correction: auto (default: by source type - Keyence none, else basicpy) | basicpy (best,
+              slow, needs basicpy) | median (good default for large sets) | spatial (uneven
+              background) | none (already flat, or iterating fast)
+  algorithm:  auto (default: Keyence coordinate, else phase) | phase (fast, needs texture)
+              | sift (low contrast or stage drift; needs OpenCV) | coordinate (no
+              registration; trust the positions - fastest)
+  keyence_step: auto (default) measures the Keyence tile step from neighbouring tiles; the
+              .bcf corner points are ~2.3 % short on BZ-X stages. Never use 'edgepoints'
+              except to reproduce an old mosaic.
+  Positions JSON + a correction: tile names must be relative to one tile directory (absolute
+              names are rebased onto the tiles' common folder; tiles on several drives are
+              refused) - corrected tiles are always written under out_dir/intermediate.
   alignment_mode: reference (align on ref_channel) | average | max_projection (fuse
               channels first when no single channel has enough structure)
   z_mode:     none (2D) | mip_output_only (align 2D, write a projection - cheapest way to
@@ -128,8 +138,8 @@ def _split_tags(raw: str) -> list[str]:
 def _build_config(
     source: str,
     out_dir: str,
-    correction: str = "basicpy",
-    algorithm: str = "phase",
+    correction: str = "auto",
+    algorithm: str = "auto",
     scene: int | None = None,
     ref_channel: int = 0,
     ref_tag: str = "",
@@ -140,6 +150,7 @@ def _build_config(
     overlap: float = 0.1,
     grid_cols: int | None = None,
     pixel_size_um: float | None = None,
+    keyence_step: str = "auto",
 ) -> StitchConfig:
     """Validate and normalise the shared parameter set. Raises ValueError with a usable message."""
     return StitchConfig(
@@ -157,6 +168,7 @@ def _build_config(
         overlap=overlap,
         grid_cols=grid_cols,
         pixel_size_um=pixel_size_um,
+        keyence_step=keyence_step,
     )
 
 
@@ -200,12 +212,24 @@ def axio_list_algorithms() -> str:
     return _json(
         {
             "version": __version__,
-            "corrections": [m.value for m in CorrectionMethod],
-            "algorithms": [m.value for m in StitchAlgorithm],
+            "corrections": ["auto"] + [m.value for m in CorrectionMethod],
+            "algorithms": ["auto"] + [m.value for m in StitchAlgorithm],
+            "keyence_steps": ["auto", "measured", "edgepoints", "overlap"],
             "alignment_modes": [m.value for m in AlignmentMode],
             "z_modes": [m.value for m in ZMode],
             "guidance": {
+                "keyence_step": {
+                    "auto": "Default. Measure the tile step, shears and serpentine odd-row "
+                            "offsets from neighbouring raw tiles (~25 s once per dataset, then "
+                            "cached); fall back to the scan-region corners with a warning.",
+                    "measured": "Like auto, but fail instead of falling back.",
+                    "edgepoints": "Step from the scan-region corner points (AXIO <= 1.2.1). On "
+                                  "BZ-X stages this is ~2.3 % short in x: every overlap zone is "
+                                  "double-imaged. Only for reproducing old mosaics.",
+                    "overlap": "Uniform grid at tile * (1 - overlap).",
+                },
                 "correction": {
+                    "auto": "Default. By source type: Keyence -> none, everything else -> basicpy.",
                     "basicpy": "BaSiCPy flatfield. Best quality; use when there is a visible "
                                "illumination gradient or vignetting. Slow; needs the basicpy package.",
                     "median": "Median flatfield approximation. Much cheaper and usually good "
@@ -216,6 +240,8 @@ def axio_list_algorithms() -> str:
                             "iterating on registration.",
                 },
                 "algorithm": {
+                    "auto": "Default. By source type: Keyence -> coordinate (with the measured "
+                            "stage model), everything else -> phase.",
                     "phase": "Phase correlation. Default: fast and robust when the stage is "
                              "repeatable and tiles carry texture.",
                     "sift": "Feature matching with a Tikhonov-anchored least-squares solve. For "
@@ -253,6 +279,9 @@ def axio_inspect_dataset(
     overlap: float = 0.1,
     grid_cols: int | None = None,
     pixel_size_um: float | None = None,
+    keyence_step: str = "auto",
+    summary_only: bool | None = None,
+    max_tiles: int = 200,
 ) -> str:
     """
     Inspect ANY supported tile dataset and return its structure — not just Zeiss.
@@ -276,11 +305,19 @@ def axio_inspect_dataset(
             (e.g. Micro-Manager 'Position012') rather than explicit row/col.
         pixel_size_um: Micrometres per pixel, to convert stage-unit positions (OME/JSON) to
             pixels when the source omits its own scale.
+        keyence_step: Keyence .bcf only: 'auto' (measure the tile step from neighbouring tiles;
+            the first call on a dataset reads ~350 tiles, ~25 s, then it is cached) |
+            'measured' | 'edgepoints' (AXIO <= 1.2.1) | 'overlap'.
+        summary_only: None (default) summarises scenes with more than ``max_tiles`` tiles
+            (first and last tiles, bounding box, grid estimate); True always summarises;
+            False returns every tile (a 3,700-tile scan is ~0.9 MB of JSON).
+        max_tiles: Threshold for the default summary.
 
     Returns:
-        JSON with keys: source_type ('zeiss'|'fiji'|'ome'|'explicit'|'grid'), confidence,
-        raw_dir, scenes[{scene_id, tiles[...], total_tiles}], total_scenes, total_tiles,
-        pixel_scale_um, tile_geometry, notes, warnings.
+        JSON with keys: source_type ('zeiss'|'keyence'|'fiji'|'ome'|'explicit'|'grid'),
+        confidence, raw_dir, scenes[{scene_id, tiles[...], total_tiles, tiles_truncated?}],
+        total_scenes, total_tiles, pixel_scale_um, tile_geometry, stage_model (Keyence),
+        tiles_listing ('full'|'summary'), notes, warnings.
     """
     try:
         config = StitchConfig(
@@ -289,11 +326,12 @@ def axio_inspect_dataset(
             overlap=overlap,
             grid_cols=grid_cols,
             pixel_size_um=pixel_size_um,
+            keyence_step=keyence_step,
         )
     except Exception as exc:
         return _error(str(exc), source=source)
 
-    from .engine import StitchingEngine
+    from .engine import StitchingEngine, summarize_inspect
 
     try:
         metadata = StitchingEngine(config).inspect_metadata()
@@ -335,6 +373,10 @@ def axio_inspect_dataset(
     except Exception as exc:  # noqa: BLE001 - geometry is a bonus, not the payload
         metadata["tile_geometry"] = {"error": f"{type(exc).__name__}: {exc}"}
 
+    if summary_only is not False:
+        summarize_inspect(metadata, max_tiles=max(1, int(max_tiles)), force=bool(summary_only))
+    else:
+        metadata["tiles_listing"] = "full"
     return _json(metadata)
 
 
@@ -449,8 +491,8 @@ def axio_detect_source(source: str) -> str:
 def axio_estimate_stitch(
     source: str,
     out_dir: str,
-    correction: str = "basicpy",
-    algorithm: str = "phase",
+    correction: str = "auto",
+    algorithm: str = "auto",
     scene: int | None = None,
     ref_channel: int = 0,
     ref_tag: str = "",
@@ -461,6 +503,7 @@ def axio_estimate_stitch(
     overlap: float = 0.1,
     grid_cols: int | None = None,
     pixel_size_um: float | None = None,
+    keyence_step: str = "auto",
 ) -> str:
     """
     Size a stitching job BEFORE running it: canvas dimensions, output size, peak RAM,
@@ -478,8 +521,13 @@ def axio_estimate_stitch(
         source: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a
             directory of tiles (see axio_inspect_dataset for the full list).
         out_dir: Intended output directory (its volume's free space is part of the verdict).
-        correction: 'basicpy' | 'median' | 'spatial' | 'none'.
-        algorithm: 'phase' | 'sift' | 'coordinate'.
+        correction: 'auto' (by source type; Keyence -> none, otherwise basicpy) | 'basicpy'
+            | 'median' | 'spatial' | 'none'.
+        algorithm: 'auto' (by source type; Keyence -> coordinate, otherwise phase) | 'phase'
+            | 'sift' | 'coordinate'.
+        keyence_step: Keyence .bcf only. 'auto' measures the tile step from neighbouring
+            tiles (the scan-region corner points are a few percent off on BZ-X stages);
+            'measured' fails instead of falling back; 'edgepoints' reproduces AXIO <= 1.2.1.
         scene: Single scene index (0-based). Omit to estimate every scene.
         ref_channel: Reference channel index for multi-page tiles.
         ref_tag: Reference channel filename tag for split-channel datasets (e.g. '_c1_').
@@ -498,6 +546,7 @@ def axio_estimate_stitch(
             source, out_dir, correction, algorithm, scene, ref_channel,
             ref_tag, target_tags, alignment_mode, z_mode, ref_z_slice,
             overlap=overlap, grid_cols=grid_cols, pixel_size_um=pixel_size_um,
+            keyence_step=keyence_step,
         )
     except Exception as exc:
         return _error(str(exc))
@@ -514,13 +563,14 @@ def axio_estimate_stitch(
 def axio_validate_stitch(
     source: str,
     out_dir: str,
-    correction: str = "basicpy",
-    algorithm: str = "phase",
+    correction: str = "auto",
+    algorithm: str = "auto",
     scene: int | None = None,
     ref_tag: str = "",
     overlap: float = 0.1,
     grid_cols: int | None = None,
     pixel_size_um: float | None = None,
+    keyence_step: str = "auto",
 ) -> str:
     """
     Check a stitching configuration's prerequisites without running anything.
@@ -548,6 +598,7 @@ def axio_validate_stitch(
         config = _build_config(
             source, out_dir, correction, algorithm, scene, ref_tag=ref_tag,
             overlap=overlap, grid_cols=grid_cols, pixel_size_um=pixel_size_um,
+            keyence_step=keyence_step,
         )
     except Exception as exc:
         return _json({"valid": False, "errors": [str(exc)], "warnings": []})
@@ -568,8 +619,8 @@ def axio_validate_stitch(
 def axio_start_stitch(
     source: str,
     out_dir: str,
-    correction: str = "basicpy",
-    algorithm: str = "phase",
+    correction: str = "auto",
+    algorithm: str = "auto",
     scene: int | None = None,
     ref_channel: int = 0,
     ref_tag: str = "",
@@ -580,6 +631,7 @@ def axio_start_stitch(
     overlap: float = 0.1,
     grid_cols: int | None = None,
     pixel_size_um: float | None = None,
+    keyence_step: str = "auto",
 ) -> str:
     """
     Start the stitching pipeline in the BACKGROUND and return a job id immediately.
@@ -595,8 +647,13 @@ def axio_start_stitch(
         source: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a
             directory of tiles (see axio_inspect_dataset for the full list).
         out_dir: Directory to write the stitched TIFFs and previews into.
-        correction: 'basicpy' | 'median' | 'spatial' | 'none'.
-        algorithm: 'phase' | 'sift' | 'coordinate'.
+        correction: 'auto' (by source type; Keyence -> none, otherwise basicpy) | 'basicpy'
+            | 'median' | 'spatial' | 'none'.
+        algorithm: 'auto' (by source type; Keyence -> coordinate, otherwise phase) | 'phase'
+            | 'sift' | 'coordinate'.
+        keyence_step: Keyence .bcf only. 'auto' measures the tile step from neighbouring
+            tiles (the scan-region corner points are a few percent off on BZ-X stages);
+            'measured' fails instead of falling back; 'edgepoints' reproduces AXIO <= 1.2.1.
         scene: Single scene index (0-based). Omit to process every scene sequentially.
         ref_channel: Reference channel index for multi-page tiles.
         ref_tag: Reference channel filename tag for split-channel datasets (e.g. '_c1_').
@@ -614,6 +671,7 @@ def axio_start_stitch(
             source, out_dir, correction, algorithm, scene, ref_channel,
             ref_tag, target_tags, alignment_mode, z_mode, ref_z_slice,
             overlap=overlap, grid_cols=grid_cols, pixel_size_um=pixel_size_um,
+            keyence_step=keyence_step,
         )
     except Exception as exc:
         return _error(str(exc))
@@ -722,7 +780,7 @@ def axio_stitch_sync(
     source: str,
     out_dir: str,
     correction: str = "median",
-    algorithm: str = "phase",
+    algorithm: str = "auto",
     scene: int | None = None,
     ref_channel: int = 0,
     ref_tag: str = "",
@@ -733,6 +791,7 @@ def axio_stitch_sync(
     overlap: float = 0.1,
     grid_cols: int | None = None,
     pixel_size_um: float | None = None,
+    keyence_step: str = "auto",
 ) -> str:
     """
     Run the pipeline synchronously and return the finished result.
@@ -755,6 +814,7 @@ def axio_stitch_sync(
             source, out_dir, correction, algorithm, scene, ref_channel,
             ref_tag, target_tags, alignment_mode, z_mode, ref_z_slice,
             overlap=overlap, grid_cols=grid_cols, pixel_size_um=pixel_size_um,
+            keyence_step=keyence_step,
         )
     except Exception as exc:
         return _json({"success": False, "error_message": str(exc)})

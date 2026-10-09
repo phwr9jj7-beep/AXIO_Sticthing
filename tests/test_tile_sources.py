@@ -429,8 +429,12 @@ class TestKeyence:
         assert detect_source_type(bcf.parent) == "keyence"
 
     def test_positions_and_scale_resolved(self, tmp_path):
+        # The legacy corner-point formula, requested explicitly. The DEFAULT ('auto') measures
+        # the step from the tiles (tests/test_stage_model.py), because on real BZ-X scans the
+        # corner points are region corners, not tile centres (issue #12).
         bcf = self._make(tmp_path)
-        r = resolve_tiles(bcf.parent)
+        r = resolve_tiles(bcf.parent, keyence_step="edgepoints")
+        assert r.stage_model["method"] == "edgepoints"
         assert r.source_type == "keyence"
         assert r.confidence == "high"
         assert r.total_tiles == 4
@@ -439,6 +443,12 @@ class TestKeyence:
         assert tiles["tile_001.tif"] == (0.0, 0.0)
         assert abs(tiles["tile_002.tif"][0] - 1317.0) < 1.0
         assert abs(tiles["tile_003.tif"][1] - 997.7) < 1.0
+
+    def test_auto_without_tile_files_falls_back_with_a_warning(self, tmp_path):
+        bcf = self._make(tmp_path)
+        r = resolve_tiles(bcf.parent)
+        assert r.stage_model["method"] == "edgepoints"
+        assert any("could not measure the tile step" in w for w in r.warnings)
 
     def test_corrupted_bcf_raises(self, tmp_path):
         bad_bcf = tmp_path / "broken.bcf"

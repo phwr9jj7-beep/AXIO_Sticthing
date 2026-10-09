@@ -142,3 +142,14 @@ def seamed_tiff(tmp_path: Path) -> Path:
         compression="deflate", metadata={"axes": "YX"},
     )
     return out
+
+
+# ---------------------------------------------------------------------------
+# Isolation: the Keyence stage-model cache must never leak between tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _isolated_stage_model_cache(tmp_path_factory, monkeypatch):
+    """Point the stage-model cache at a fresh directory for every test."""
+    monkeypatch.setenv("AXIO_STITCHING_CACHE_DIR", str(tmp_path_factory.mktemp("axio_cache")))
+    monkeypatch.delenv("AXIO_STITCHING_CACHE", raising=False)

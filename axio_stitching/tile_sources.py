@@ -127,6 +127,7 @@ def resolve_tiles(
     serpentine: bool = True,
     tile_size: tuple[int, int] | None = None,
     pixel_size_um: float | None = None,
+    keyence_step: str = "auto",
 ) -> ResolvedSource:
     """
     Resolve tile positions from any supported source, auto-detecting the format.
@@ -144,6 +145,10 @@ def resolve_tiles(
         tile_size: ``(width, height)`` in pixels, overriding what is read from a sample tile.
         pixel_size_um: Micrometres per pixel, overriding what a source declares (needed to
             convert stage-unit positions when a source omits its scale).
+        keyence_step: Keyence .bcf only — how the tile step is obtained: ``auto`` (measure
+            it from neighbouring tiles, fall back to the corner points with a warning),
+            ``measured`` (measure or fail), ``edgepoints`` (AXIO <= 1.2.1 behaviour) or
+            ``overlap`` (uniform grid at ``tile * (1 - overlap)``).
 
     Returns:
         A :class:`ResolvedSource`.
@@ -161,11 +166,11 @@ def resolve_tiles(
     if path.is_dir():
         return _resolve_directory(
             path, overlap=overlap, grid_cols=grid_cols, serpentine=serpentine,
-            tile_size=tile_size, pixel_size_um=pixel_size_um,
+            tile_size=tile_size, pixel_size_um=pixel_size_um, keyence_step=keyence_step,
         )
     return _resolve_file(
         path, overlap=overlap, grid_cols=grid_cols, serpentine=serpentine,
-        tile_size=tile_size, pixel_size_um=pixel_size_um,
+        tile_size=tile_size, pixel_size_um=pixel_size_um, keyence_step=keyence_step,
     )
 
 
@@ -228,6 +233,7 @@ def _resolve_file(path: Path, **kw) -> ResolvedSource:
             tile_size=kw.get("tile_size"),
             pixel_size_um=kw.get("pixel_size_um"),
             overlap=kw.get("overlap", 0.1),
+            keyence_step=kw.get("keyence_step", "auto"),
         )
     if kind == "fiji":
         return _from_fiji(path, kw.get("tile_size"))
@@ -264,6 +270,7 @@ def _resolve_directory(path: Path, **kw) -> ResolvedSource:
             tile_size=kw.get("tile_size"),
             pixel_size_um=kw.get("pixel_size_um"),
             overlap=kw.get("overlap", 0.1),
+            keyence_step=kw.get("keyence_step", "auto"),
         )
         result.notes.insert(0, f"used the Keyence metadata {keyence.name} found in the directory")
         return result
@@ -370,18 +377,39 @@ def _from_zeiss(path: Path) -> ResolvedSource:
 # keyence .bcf container
 # ---------------------------------------------------------------------------
 
+#: How a Keyence tile step is obtained. ``auto`` measures it from neighbouring tiles and falls
+#: back to the scan-region corners with a warning; ``measured`` refuses to fall back.
+KEYENCE_STEP_MODES = ("auto", "measured", "edgepoints", "overlap")
+
+#: Nominal BZ-X overlap, used only as the unwrap prior when the .bcf has no corner points.
+_KEYENCE_NOMINAL_OVERLAP = 0.3
+
+
 def _from_keyence(
     path: Path,
     tile_size: tuple[int, int] | None = None,
     pixel_size_um: float | None = None,
     overlap: float = 0.1,
+    keyence_step: str = "auto",
 ) -> ResolvedSource:
     """
     Parse a Keyence All-in-One microscope container (.bcf) to extract tile positions.
 
     Keyence .bcf files are ZIP archives storing acquisition parameters in XML and a
     binary FileList table containing per-tile (row, col) grid coordinates.
+
+    The tile step is NOT trusted from the scan-region corner points (``EdgePoint0..3``):
+    they are user-set region corners, not tile centres, and on BZ-X stages the step they
+    imply is a few percent short (issue #12). With ``keyence_step='auto'`` (default) the
+    step, shears and serpentine odd-row offsets are measured from neighbouring raw tiles
+    (:mod:`axio_stitching.stage_model`); the corner step is used only as the unwrap prior
+    and as a cross-check. ``'edgepoints'`` reproduces the AXIO <= 1.2.1 layout,
+    ``'overlap'`` lays a uniform grid at ``tile * (1 - overlap)``.
     """
+    if keyence_step not in KEYENCE_STEP_MODES:
+        raise TileSourceError(
+            f"keyence_step must be one of {', '.join(KEYENCE_STEP_MODES)}, got {keyence_step!r}"
+        )
     warnings: list[str] = []
     raw_dir = path.parent
 
@@ -448,18 +476,16 @@ def _from_keyence(
                 except Exception:
                     pass
 
-        # Compute tile pitch / step in pixels
+        # Tile pitch implied by the scan-region corner points (a prior, not the answer).
+        edge_step: tuple[float, float] | None = None
         if len(edge_pts) >= 4 and cols and rows and cols > 1 and rows > 1 and cal_um:
             dx_nm = abs(edge_pts[1][0] - edge_pts[0][0])
             dy_nm = abs(edge_pts[0][1] - edge_pts[3][1])
-            step_x_px = (dx_nm / (cols - 1)) / 1000.0 / cal_um
-            step_y_px = (dy_nm / (rows - 1)) / 1000.0 / cal_um
-        else:
-            step_x_px = tile_w * (1.0 - overlap)
-            step_y_px = tile_h * (1.0 - overlap)
-            warnings.append(
-                f"could not determine stage step from edge points; assumed {overlap:.0%} overlap"
+            edge_step = (
+                (dx_nm / (cols - 1)) / 1000.0 / cal_um,
+                (dy_nm / (rows - 1)) / 1000.0 / cal_um,
             )
+        records: list[tuple[str, int, int]] = []
 
         # 5. Tile FileList
         if "GroupFileProperty/ImageList/FileList" not in names:
@@ -471,7 +497,6 @@ def _from_keyence(
 
         count = struct.unpack_from("<I", file_list_data, 0)[0]
         fl_len = len(file_list_data)
-        scene_tiles: list[dict] = []
         if count > 0 and (fl_len - 4) % count == 0 and (fl_len - 4) // count >= 27:
             rec_size = (fl_len - 4) // count
             for i in range(count):
@@ -480,13 +505,7 @@ def _from_keyence(
                 c = struct.unpack_from("<i", rec, 21)[0]
                 fn_len = rec[25]
                 fn = rec[26 : 26 + fn_len].decode("latin1", errors="replace").strip("\x00")
-                scene_tiles.append({
-                    "filename": fn,
-                    "x": float(c * step_x_px),
-                    "y": float(r * step_y_px),
-                    "w": tile_w,
-                    "h": tile_h,
-                })
+                records.append((fn, r, c))
         else:
             offset = 4
             for _ in range(count):
@@ -503,18 +522,83 @@ def _from_keyence(
                     break
                 fn = file_list_data[offset : offset + fn_len].decode("latin1", errors="replace").strip("\x00")
                 offset += fn_len + 8
-                scene_tiles.append({
-                    "filename": fn,
-                    "x": float(c * step_x_px),
-                    "y": float(r * step_y_px),
-                    "w": tile_w,
-                    "h": tile_h,
-                })
+                records.append((fn, r, c))
 
-    if not scene_tiles:
+    if not records:
         raise TileSourceError(f"no tile records found in Keyence BCF {path.name}")
 
     scale_str = f" at {cal_um:.4g} µm/px" if cal_um else ""
+    notes = [f"parsed Keyence BCF metadata ({len(records)} tiles, {cols}x{rows} grid){scale_str}"]
+    grid = {(r, c): fn for fn, r, c in records}
+    overlap_step = (tile_w * (1.0 - overlap), tile_h * (1.0 - overlap))
+    stage: dict = {
+        "method": None,
+        "requested": keyence_step,
+        "edgepoint_step_px": [round(v, 4) for v in edge_step] if edge_step else None,
+    }
+    positions: dict[str, tuple[float, float]] | None = None
+
+    if keyence_step in ("auto", "measured"):
+        from .stage_model import layout, measure_stage_model
+
+        prior = edge_step or (tile_w * (1 - _KEYENCE_NOMINAL_OVERLAP),
+                              tile_h * (1 - _KEYENCE_NOMINAL_OVERLAP))
+        model, reason = measure_stage_model(grid, raw_dir, prior, metadata_file=path)
+        if model is not None:
+            positions = layout(grid, model)
+            stage.update(model.to_dict())
+            stage["method"] = "measured"
+            notes.append(
+                f"tile step measured from {model.n_used_horizontal + model.n_used_vertical} "
+                f"neighbour pairs: x {model.sx:.2f} px, y {model.sy:.2f} px, odd-row offset "
+                f"({model.bx:+.2f}, {model.by:+.2f}) px, residual SD "
+                f"{max(model.residual_sd_x, model.residual_sd_y):.2f} px"
+            )
+            if edge_step is not None:
+                rel_x = (model.sx - edge_step[0]) / model.sx
+                rel_y = (model.sy - edge_step[1]) / model.sy
+                stage["edgepoint_error_fraction"] = [round(rel_x, 5), round(rel_y, 5)]
+                if max(abs(rel_x), abs(rel_y)) > 0.005:
+                    warnings.append(
+                        f"the scan-region corner points imply a tile step of "
+                        f"{edge_step[0]:.1f} x {edge_step[1]:.1f} px, but neighbouring tiles "
+                        f"overlap at {model.sx:.1f} x {model.sy:.1f} px ({rel_x:+.1%} in x, "
+                        f"{rel_y:+.1%} in y). The measured step is used. Mosaics stitched from "
+                        "this .bcf by AXIO <= 1.2.1 used the corner step: they are scaled by "
+                        "that error and double-imaged in every overlap zone, so re-stitch them."
+                    )
+        elif keyence_step == "measured":
+            raise TileSourceError(f"could not measure the Keyence tile step: {reason}")
+        else:
+            stage["measurement_failure"] = reason
+            warnings.append(
+                f"could not measure the tile step from neighbouring tiles ({reason}); "
+                + ("falling back to the scan-region corner points, which are known to be a few "
+                   "percent off on BZ-X stages (issue #12). Prefer algorithm='phase', or check "
+                   "the mosaic with axio_qc_report (ghost_excess)."
+                   if edge_step else
+                   f"falling back to a uniform grid with {overlap:.0%} overlap.")
+            )
+
+    if positions is None:
+        if keyence_step != "overlap" and edge_step is not None:
+            step = edge_step
+            stage["method"] = "edgepoints"
+        else:
+            step = overlap_step
+            stage["method"] = "overlap"
+            if keyence_step != "overlap":
+                warnings.append(
+                    f"could not determine the stage step from edge points; assumed "
+                    f"{overlap:.0%} overlap"
+                )
+        stage["step_x_px"], stage["step_y_px"] = round(step[0], 4), round(step[1], 4)
+        positions = {fn: (float(c * step[0]), float(r * step[1])) for fn, r, c in records}
+
+    scene_tiles = [
+        {"filename": fn, "x": positions[fn][0], "y": positions[fn][1], "w": tile_w, "h": tile_h}
+        for fn, _r, _c in records
+    ]
     return ResolvedSource(
         scenes={0: scene_tiles},
         raw_dir=raw_dir,
@@ -523,8 +607,9 @@ def _from_keyence(
         pixel_scale_um=cal_um,
         tile_width=tile_w,
         tile_height=tile_h,
-        notes=[f"parsed Keyence BCF metadata ({len(scene_tiles)} tiles, {cols}x{rows} grid){scale_str}"],
+        notes=notes,
         warnings=warnings,
+        stage_model=stage,
     )
 
 
