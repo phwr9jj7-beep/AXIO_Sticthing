@@ -185,3 +185,6 @@ class TestOneRowStrips:
         assert streamed.method == "streamed"
         assert streamed.metrics["mean"] == full.metrics["mean"]
         assert streamed.metrics["seam_prominence_x"] == full.metrics["seam_prominence_x"]
+        # the y-gradient must be measured across strip boundaries too
+        assert streamed.metrics["seam_prominence_y"] == pytest.approx(full.metrics["seam_prominence_y"], rel=1e-3)
+        assert streamed.metrics["seam_prominence_y"] > 0

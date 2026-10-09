@@ -118,6 +118,10 @@ class _Accumulator:
         self.grad_y = np.zeros(max(1, height - 1), dtype=np.float64)
         self.grad_y_n = np.zeros(max(1, height - 1), dtype=np.int64)
         self._max_value = float(np.iinfo(dtype).max) if np.issubdtype(dtype, np.integer) else None
+        # Last row of the previous full-width block, so the y-gradient is also measured ACROSS
+        # strip boundaries (one-row strips have no within-block y-gradient at all).
+        self._last_row: np.ndarray | None = None
+        self._last_row_y = -2
 
     def add_block(self, block: np.ndarray, y_offset: int, x_offset: int) -> None:
         """Fold a 2-D block located at ``(y_offset, x_offset)`` into the statistics."""
@@ -153,6 +157,13 @@ class _Accumulator:
             if span > 0:
                 self.grad_y[y_offset:stop] += dy[:span]
                 self.grad_y_n[y_offset:stop] += w
+        if x_offset == 0 and w == self.width:
+            boundary = y_offset - 1
+            if self._last_row is not None and self._last_row_y == boundary and 0 <= boundary < self.grad_y.size:
+                self.grad_y[boundary] += float(np.abs(block[0].astype(np.float32) - self._last_row).sum())
+                self.grad_y_n[boundary] += w
+            self._last_row = block[-1].astype(np.float32)
+            self._last_row_y = y_offset + h - 1
 
     # -- derived -------------------------------------------------------------
 
