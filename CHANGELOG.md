@@ -2,6 +2,58 @@
 
 All notable changes to AXIO Stitching Studio.
 
+## 1.3.0 — 2026-10-09
+
+Correctness and data-safety release. **Keyence mosaics stitched with 1.2.0 / 1.2.1 are
+geometrically wrong and should be re-stitched** (issue #12). Thanks to the users who measured
+the error on 43 real BZ-X scans and traced it to the source.
+
+- **Keyence tile step is measured, not taken from the scan-region corners** (#12). The
+  `.bcf` corner points (`ImageJoint/EdgePoint0..3`) are user-set region corners, not tile
+  centres; on BZ-X stages the step they imply was **2.3 % short in x** for 51-column scans
+  (1.0 % for 50-column scans), so every mosaic was compressed in x, elliptical wells came out
+  of round ones, and every x-overlap zone (about half of each mosaic) was a blend of two
+  copies ~31 px apart. The 1.2.1 claim of "zero seam artifacts" was wrong: the blend leaves no
+  seam, which is why the seam metric did not see it.
+  - New `axio_stitching/stage_model.py`: phase-correlates neighbour chains along a few rows
+    and columns (both row parities; every row step crossed), fits
+    `X = c*sx + r*kx + odd(r)*bx`, `Y = r*sy + c*ky + odd(r)*by` (steps, shears, serpentine
+    odd-row offsets) by trimmed least squares, and caches the model per dataset (~25 s per
+    3,723-tile scan on first use).
+  - `keyence_step`: `auto` (default; measure, fall back to the corners with a warning) |
+    `measured` | `edgepoints` (the 1.2.x behaviour, for reproducing old mosaics) | `overlap`.
+    CLI `--keyence-step`, MCP `keyence_step`.
+  - A warning names the corner-point error whenever it exceeds 0.5 %.
+- **Shading correction can never target the raw tiles** (#13). With absolute tile names (a
+  positions JSON), `out_dir / name` resolved to the raw tile: the correction was silently
+  skipped (exit 0, uncorrected mosaic) and only a per-tile `exists()` check prevented an
+  overwrite. Explicit positions are now rebased onto the tiles' common directory with
+  relative names; every corrected-tile path is checked to stay inside the correction
+  directory and never to be its source; tiles on several drives refuse a correction up front;
+  reuse of existing corrected tiles is logged as a warning naming the folder.
+- **QC sees double images** — `ghost_excess_x/_y` and `ghost_lag_x/_y` in `axio_qc_report` /
+  `axio qc`: overlap-zone vs single-tile-zone autocorrelation (new `axio_stitching/ghost.py`),
+  streamed with the existing metrics. On real BZ-X overviews: broken 0.26-0.32, corrected
+  0.001.
+- **Provenance**: every mosaic gets `<mosaic>_positions.json` (tile positions in canvas
+  pixels, used by the ghost test) and every run writes `run_manifest.json` (version, resolved
+  config, source + stage model, source SHA-256, per-stage timings, outputs — failed runs too).
+- **Source-aware defaults**: `correction` / `algorithm` default to `auto` — Keyence resolves
+  to `none` + `coordinate` (the documented preset), every other source keeps `basicpy` +
+  `phase`. Explicit values always win; the resolution is logged and recorded.
+- **Bounded inspect output**: `axio_inspect_dataset` summarises scenes with more than
+  `max_tiles` (200) tiles instead of returning ~0.9 MB of JSON for a 3,723-tile scan
+  (`summary_only=False` / `axio inspect --full` for everything); the Keyence stage model is
+  part of the report.
+- `median` correction no longer requires BaSiCPy (it never used it; `axio doctor` already
+  recommended median as the BaSiCPy-free option).
+- Coordinate mode no longer logs "Using coordinates directly from Zeiss stage limits." for
+  every source.
+- Jobs: `done` turns true only after the final state is journalled (a second process could
+  read a finished job as still running).
+- The Keyence preset (`presets/keyence_brightfield_profile.json`) documents the measured step,
+  the 16-bit phase / 8-bit RGB tile formats and the QC rule.
+
 ## 1.2.1 — 2026-09-15
 
 Robustness and compatibility release for Keyence All-in-One Microscopy datasets.

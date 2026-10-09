@@ -61,28 +61,38 @@ graph TD
     B --> O[ImageJ-compatible multi-channel / 3D TIFF]
 ```
 
-### 🔬 Keyence All-in-One Microscopy (.bcf) — Validated, Confirmed & Tested
+### 🔬 Keyence All-in-One Microscopy (.bcf)
 
-Native support for **Keyence All-in-One microscopy brightfield tile-scans** is **fully validated, confirmed, and tested**:
+> **Mosaics stitched from Keyence `.bcf` files with AXIO 1.2.0 / 1.2.1 are compressed in x and
+> double-imaged in every overlap zone — re-stitch them with ≥ 1.3.0.** Those versions took the
+> tile step from the scan-region corner points, which on BZ-X stages are ~2.3 % short
+> ([#12](https://github.com/phwr9jj7-beep/AXIO_Sticthing/issues/12)). Since 1.3.0 the step is
+> measured from neighbouring tiles, and `axio qc` reports `ghost_excess_x/_y` so the failure
+> can no longer pass unnoticed.
+
+Native support for **Keyence All-in-One microscopy tile-scans** (phase contrast and colour brightfield):
 - **Zero manual configuration**: Point `--source` directly at a Keyence `.bcf` container file or its enclosing raw image folder.
 - **Universal Dynamic BCF Parsing**: Automatically handles arbitrary tile filename lengths and binary record strides (both uniform-stride detection e.g. 57-byte or 58-byte records, and dynamic sequential variable-length decoding).
-- **Direct hardware geometry extraction**: Parses the Keyence `.bcf` archive to read exact stage coordinates, scan grid geometry, pixel calibration (e.g. $0.75488\,\mu\text{m/px}$ for PlanFluor DL 10x Ph1), and individual tile mappings from the embedded property tables (`ImageList/FileList` and `ImageJoint/EdgePoint`).
-- **Gigapixel-scale benchmarked**: Empirically tested on massive multi-tile brightfield scans containing **3,650 to 3,723 tiles** per scene (**~4.87 to ~4.90 Gigapixels**, 66,452 × 73,277 to 66,887 × 73,278 pixels), stitching in ~8–9 minutes per dataset (~11–12.5 tiles/sec).
+- **Measured stage geometry**: reads the scan grid, pixel calibration (e.g. $0.75488\,\mu\text{m/px}$ for PlanFluor DL 10x Ph1) and per-tile grid positions from the `.bcf`, then measures the tile step, stage shear and serpentine odd-row offsets by phase-correlating neighbouring tiles (`keyence_step="auto"`, ~25 s once per scan, cached). The scan-region corner points (`ImageJoint/EdgePoint`) serve only as a prior and a cross-check; a warning names their error.
+- **Gigapixel scale**: tested on BZ-X scans of **3,650 to 3,723 tiles** per scene (~5 gigapixels per mosaic), stitching in ~9–13 minutes per scene; validated against an independent stage-model fit on 43 scans of three 24-well plates.
+- **Defaults that fit the instrument**: with `correction`/`algorithm` left at `auto`, Keyence sources stitch with `none` + `coordinate` on the measured positions.
 - **Reusable Hardware Presets**: Pre-configured hardware profiles are saved in [`presets/keyence_brightfield_profile.json`](presets/keyence_brightfield_profile.json) for 1-click execution.
 - **Automated ImageJ Compatibility Layer**: Gigapixel canvases exceeding 4 GB are saved as 64-bit BigTIFF, while an automated downsampled `<4 GB` overview (`*_imagej_dsN.tif`) is generated concurrently so standard 32-bit ImageJ / Fiji can open the result immediately via double-click without memory or format errors.
 
 Supporting subsystems the surfaces share: **doctor** (environment diagnosis with fixes),
 **estimate** (pre-flight canvas/RAM/disk/time sizing with an `ok / tight / will_not_fit`
 verdict), **jobs** (background execution with journalling and orphan detection), and
-**qc** (memory-bounded mosaic metrics: empty area, clipping, seam prominence).
+**qc** (memory-bounded mosaic metrics: empty area, clipping, seam prominence, and
+overlap-zone ghosting from the `<mosaic>_positions.json` sidecar every stitch writes), and a
+`run_manifest.json` per run (version, resolved config, source, timings, outputs).
 
 ## ✨ Features
 
 - **Vendor-neutral inputs** — Zeiss XML, Keyence All-in-One `.bcf`, Fiji TileConfiguration,
   OME-TIFF `PositionX/Y`, explicit positions, or filename-encoded grids, auto-detected with a
   confidence rating.
-- **Keyence BCF support (Validated & Tested)** — reverse-engineered `.bcf` parsing extracting
-  nanometer stage bounding boxes, grid pitch, calibration, and dynamic binary tile records.
+- **Keyence BCF support** — reverse-engineered `.bcf` parsing (grid, calibration, dynamic
+  binary tile records) with the tile step **measured from neighbouring tiles** (≥ 1.3.0).
 - **ImageJ <4 GB Compatibility Layer** — automated generation of downsampled ImageJ-compatible
   overview TIFFs (`*_imagej_dsN.tif`) alongside 64-bit BigTIFF mosaics, avoiding ImageJ
   32-bit format/memory limitations.
