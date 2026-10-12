@@ -57,7 +57,7 @@ The `--source` (or MCP `source`) may be any of these — it is auto-detected:
 
 | Source | Example | Positions from |
 |---|---|---|
-| Keyence BCF | `scan.bcf` or folder with `.bcf` | Keyence BCF stage coords & grid table (validated) |
+| Keyence BCF | `scan.bcf` or folder with `.bcf` | grid table + tile step **measured from neighbouring tiles** (`--keyence-step auto`) |
 | Zeiss XML | `scan_info.xml` / `scan_meta.xml` | stage coords / meander grid |
 | Fiji config | `TileConfiguration.txt` / `.registered.txt` | pixel positions in the file |
 | OME-TIFF | a folder of `*.ome.tif` with `Plane PositionX/Y` | embedded stage metadata |
@@ -78,6 +78,18 @@ files: `layout` (`multi-page` → `--ref-channel` | `split-channel` → `--ref-t
 silently produces a single 2-D slice**), and `recommendations` — the same facts restated as
 the exact parameters to pass. It also reports the detected `source_type` and `confidence`.
 
+**Keyence rules:** leave `--correction`/`--algorithm` at `auto` (→ `none` + `coordinate`) and
+`--keyence-step` at `auto`: the step is measured from neighbouring tiles (~25 s once per scan,
+then cached) and `inspect` reports it as `stage_model`. The `.bcf` corner points are ~2.3 % short
+on BZ-X stages, so **never use `--keyence-step edgepoints`** except to reproduce a mosaic made
+by AXIO ≤ 1.2.1 — and treat any such mosaic as wrong until `axio qc` says otherwise. A warning
+"corner points imply a tile step of …" is expected and harmless; "could not measure the tile
+step" is not — check that the tiles sit next to the `.bcf`.
+
+**Positions JSON + a correction:** tile names are rebased onto the tiles' common folder;
+corrected tiles always go to `<out_dir>/intermediate/…`, never next to the raw tiles. Tiles
+spread over several drives cannot be corrected (validate says so) — use `--correction none`.
+
 **Non-Zeiss rules:** a **filename-grid folder** is only an approximate layout
 (`confidence: low`) — stitch it with `phase`/`sift`, **not** `coordinate`, and pass `--overlap`
 (and `--grid-cols` if filenames carry a linear index). **OME / µm positions** need `--pixel-size-um`
@@ -89,6 +101,9 @@ when the source omits `PhysicalSizeX`. The tile TIFFs must sit in the source dir
 axio estimate --source "D:/data/scan_info.xml" --out-dir "D:/out" \
               --correction basicpy --algorithm phase --z-mode mip_align_3d
 ```
+
+(`--correction` / `--algorithm` default to `auto`: Keyence → `none` + `coordinate`, every other
+source → `basicpy` + `phase`.)
 
 Returns the canvas dimensions, the output size, the estimated **peak RAM**, the intermediate
 footprint of the correction pass, a rough wall-clock figure, and a verdict:
@@ -138,7 +153,14 @@ axio outputs "D:/out"
 - `saturated_fraction` — clipped at the sensor maximum. An acquisition problem, not a
   stitching one.
 - `seam_prominence_x` / `_y` — the strongest gradient ridge over the typical gradient. ~1 is
-  clean; ≥ 3 means visible seams; ≥ 6 means registration did not converge.
+  clean; ≥ 3 means visible seams; ≥ 6 means registration did not converge. Wells, plate
+  borders and canvas edges also make ridges, so do not judge a plate scan on this alone.
+- `ghost_excess_x` / `_y` (+ `ghost_lag_*`) — **double images in the tile overlap zones**, the
+  signature of a wrong tile step, which blending hides from the seam metric. ~0 clean;
+  ≥ 0.05 suspicious; ≥ 0.15 a ghost offset by `ghost_lag_*` px. Needs the
+  `<mosaic>_positions.json` sidecar (written by AXIO ≥ 1.3, found automatically, also for the
+  `*_imagej_dsN` overview); for older mosaics pass `--positions` / `positions=`. Ghosts under
+  ~8 px are only measurable on the full-resolution mosaic.
 - `findings` — those numbers restated as actionable sentences.
 
 Through MCP, `axio_read_preview` returns the preview thumbnail as an **image you can actually
@@ -216,6 +238,9 @@ See `docs/AGENT_INTEGRATION.md` for the per-platform paths.
 | Memory error mid-run | `axio estimate` said `tight` or `will_not_fit`. Split by scene, or `--z-mode mip_output_only`. |
 | Torn or duplicated tissue | Registration diverged. Try `sift`; if that fails too, `coordinate` gives a geometrically honest (if seam-visible) mosaic. |
 | Output is mostly empty | Tiles missing, or the wrong `--scene`. Re-check `axio inspect`. |
+| `ghost_excess_x` ≥ 0.15 on a Keyence mosaic | Stitched with the corner-point step (AXIO ≤ 1.2.1 or `--keyence-step edgepoints`). Re-stitch with AXIO ≥ 1.3 and the default `auto`. |
+| `correction=… cannot run on this source` | Tile names could not be made relative to one folder (several drives). Copy the tiles under one folder, or `--correction none`. |
+| `[warning] all N corrected tiles … already exist` | A previous correction in the same `out_dir` is reused. Delete `<out_dir>/intermediate` to recompute. |
 | `No module named 'mcp.server.fastmcp'` | An MCP SDK 2.0 install. The server supports both APIs; `axio doctor` reports which one is bound. |
 
 ## Scope

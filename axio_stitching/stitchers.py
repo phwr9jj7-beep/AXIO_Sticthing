@@ -93,7 +93,7 @@ def compute_alignment(
             progress_fn=_progress,
         )
     else:  # coordinate
-        _progress(80, "Using coordinates directly from Zeiss stage limits.")
+        _progress(80, "Coordinate mode: using the source's tile positions directly (no registration).")
         return {t["filename"]: (t["y"], t["x"]) for t in tiles}
 
 

@@ -30,6 +30,13 @@ Metrics
     these profiles; a value near 1 means no ridge stands out (good), and a large value means
     a hard edge runs straight across the mosaic (bad). The positions of the top ridges are
     returned too, so they can be compared against the tile pitch.
+
+``ghost_excess_x`` / ``ghost_excess_y`` (needs the tile layout)
+    Double images in the tile OVERLAP zones — what a wrong tile step produces, and what the
+    seam metric cannot see because feathered blending hides the edge. Overlap-zone versus
+    single-tile-zone autocorrelation at lags 8-64 px (:mod:`axio_stitching.ghost`); ~0 is
+    clean, >= 0.05 suspicious, >= 0.15 a ghost at ``ghost_lag_*`` pixels. The layout is read
+    from the ``<mosaic>_positions.json`` sidecar AXIO >= 1.3 writes, or passed explicitly.
 """
 
 from __future__ import annotations
@@ -41,6 +48,9 @@ from typing import Any
 
 import numpy as np
 import tifffile
+
+from .ghost import GHOST_FAIL, GHOST_WARN
+from .ghost import LAG_MIN as GHOST_LAG_MIN
 
 #: Frames larger than this are streamed segment-by-segment rather than read whole.
 STREAM_THRESHOLD_PIXELS = 32_000_000
@@ -108,6 +118,10 @@ class _Accumulator:
         self.grad_y = np.zeros(max(1, height - 1), dtype=np.float64)
         self.grad_y_n = np.zeros(max(1, height - 1), dtype=np.int64)
         self._max_value = float(np.iinfo(dtype).max) if np.issubdtype(dtype, np.integer) else None
+        # Last row of the previous full-width block, so the y-gradient is also measured ACROSS
+        # strip boundaries (one-row strips have no within-block y-gradient at all).
+        self._last_row: np.ndarray | None = None
+        self._last_row_y = -2
 
     def add_block(self, block: np.ndarray, y_offset: int, x_offset: int) -> None:
         """Fold a 2-D block located at ``(y_offset, x_offset)`` into the statistics."""
@@ -143,6 +157,13 @@ class _Accumulator:
             if span > 0:
                 self.grad_y[y_offset:stop] += dy[:span]
                 self.grad_y_n[y_offset:stop] += w
+        if x_offset == 0 and w == self.width:
+            boundary = y_offset - 1
+            if self._last_row is not None and self._last_row_y == boundary and 0 <= boundary < self.grad_y.size:
+                self.grad_y[boundary] += float(np.abs(block[0].astype(np.float32) - self._last_row).sum())
+                self.grad_y_n[boundary] += w
+            self._last_row = block[-1].astype(np.float32)
+            self._last_row_y = y_offset + h - 1
 
     # -- derived -------------------------------------------------------------
 
@@ -212,9 +233,14 @@ def _iter_page_blocks(page: "tifffile.TiffPage", accumulator: _Accumulator) -> s
         if data is None:
             continue
         used_segments = True
-        block = np.squeeze(np.asarray(data))
-        if block.ndim > 2:
-            block = block.reshape(-1, block.shape[-2], block.shape[-1])[0]
+        # tifffile decodes a segment as (depth, rows, cols, samples). Index it rather than
+        # squeezing: AXIO writes full-resolution BigTIFF mosaics with ONE ROW PER STRIP, and a
+        # squeezed 1 x W strip became 1-D and was skipped, so QC on those files decoded nothing.
+        block = np.asarray(data)
+        if block.ndim == 4:
+            block = block[0, :, :, 0]
+        elif block.ndim == 3:
+            block = block[0] if block.shape[0] == 1 else block[..., 0]
         if block.ndim != 2:
             continue
         y_off, x_off = int(index[2]), int(index[3])
@@ -231,9 +257,24 @@ def _iter_page_blocks(page: "tifffile.TiffPage", accumulator: _Accumulator) -> s
     return "full"
 
 
-def qc_report(path: str | Path, frame: int | None = None) -> QCReport:
+class _Tee:
+    """Feed every streamed block to several consumers."""
+
+    def __init__(self, *sinks) -> None:
+        self.sinks = sinks
+
+    def add_block(self, block: np.ndarray, y_offset: int, x_offset: int) -> None:
+        for sink in self.sinks:
+            sink.add_block(block, y_offset, x_offset)
+
+
+def qc_report(path: str | Path, frame: int | None = None, positions: str | Path | None = None) -> QCReport:
     """
     Measure one 2-D frame of a stitched TIFF.
+
+    ``positions`` is a tile layout for the ghost test; by default the
+    ``<mosaic>_positions.json`` sidecar is used when it exists (also for a
+    ``*_imagej_dsN`` overview, scaled). Without a layout the ghost metrics are ``None``.
 
     ``frame`` selects the page for a multi-channel / Z-stack file; the default is the middle
     page, which for a Z-stack is the slice most likely to be in focus and for a channel stack
@@ -266,7 +307,9 @@ def qc_report(path: str | Path, frame: int | None = None) -> QCReport:
             report.total_pixels = width * height
 
             accumulator = _Accumulator(height, width, np.dtype(page.dtype))
-            report.method = _iter_page_blocks(page, accumulator)
+            ghost, ghost_note, layout_path = _ghost_setup(target, positions, width, height, page.dtype)
+            sink = _Tee(accumulator, ghost) if ghost is not None else accumulator
+            report.method = _iter_page_blocks(page, sink)
     except Exception as exc:  # noqa: BLE001 - a malformed TIFF must return a report, not raise
         report.error = f"{type(exc).__name__}: {exc}"
         return report
@@ -301,6 +344,17 @@ def qc_report(path: str | Path, frame: int | None = None) -> QCReport:
         "seam_ridges_x": seam_x_at,
         "seam_ridges_y": seam_y_at,
     }
+    ghost_result = ghost.result() if ghost is not None else {"x": None, "y": None}
+    for axis in ("x", "y"):
+        g = ghost_result.get(axis)
+        report.metrics[f"ghost_excess_{axis}"] = g["excess"] if g else None
+        report.metrics[f"ghost_lag_{axis}"] = g["lag"] if g else None
+        report.metrics[f"ghost_zones_{axis}"] = (
+            {"overlap": g["zones_overlap"], "single": g["zones_single"]} if g else None
+        )
+    report.metrics["ghost_layout"] = str(layout_path) if layout_path else None
+    if ghost_note:
+        report.metrics["ghost_note"] = ghost_note
     report.findings = _interpret(report.metrics)
     report.ok = True
     return report
@@ -334,6 +388,26 @@ def _interpret(metrics: dict[str, Any]) -> list[str]:
         findings.append("almost all signal sits in one intensity bin - check the shading correction.")
 
     for axis in ("x", "y"):
+        excess = metrics.get(f"ghost_excess_{axis}")
+        if excess is None:
+            continue
+        lag = metrics.get(f"ghost_lag_{axis}")
+        edge = (" (at the lower edge of the searched lags: the true offset may be smaller; "
+                "measure the full-resolution mosaic)") if lag == GHOST_LAG_MIN else ""
+        if excess >= GHOST_FAIL:
+            findings.append(
+                f"double image in the {axis}-overlap zones (ghost excess {excess:.2f} at a {lag} px "
+                f"offset{edge}): tiles are placed about {lag} px off along {axis}. The tile step is wrong - "
+                "for Keyence data re-stitch with AXIO >= 1.3 (keyence_step='auto'); otherwise use "
+                "algorithm='phase' or correct the positions."
+            )
+        elif excess >= GHOST_WARN:
+            findings.append(
+                f"possible double image in the {axis}-overlap zones (ghost excess {excess:.2f} at "
+                f"{lag} px). Compare an overlap zone with its neighbours at full resolution."
+            )
+
+    for axis in ("x", "y"):
         prominence = metrics[f"seam_prominence_{axis}"]
         if prominence >= 6:
             findings.append(
@@ -347,6 +421,31 @@ def _interpret(metrics: dict[str, Any]) -> list[str]:
                 "working but tile alignment is imperfect."
             )
     return findings
+
+
+def _ghost_setup(target: Path, positions, width: int, height: int, dtype):
+    """``(collector or None, note, layout path)`` for the ghost test of one frame."""
+    from .ghost import GhostCollector, find_positions_sidecar, load_layout, plan_bands
+
+    scale = None
+    if positions:
+        layout_path = Path(positions)
+        if not layout_path.exists():
+            return None, f"positions file not found: {layout_path}", None
+    else:
+        layout_path, scale = find_positions_sidecar(target)
+        if layout_path is None:
+            return None, ("no tile layout: mosaics stitched by AXIO >= 1.3 carry a "
+                          "<mosaic>_positions.json sidecar; pass positions= to test older "
+                          "mosaics for double images"), None
+    try:
+        rects = load_layout(layout_path, width, height, scale)
+        bands = plan_bands(rects, width, height)
+    except Exception as exc:  # noqa: BLE001 - the ghost test is optional
+        return None, f"could not use the tile layout ({type(exc).__name__}: {exc})", layout_path
+    if not bands:
+        return None, "the tile layout has no overlap zones wide enough to test", layout_path
+    return GhostCollector(bands, np.dtype(dtype)), None, layout_path
 
 
 def list_outputs(directory: str | Path) -> list[dict[str, Any]]:

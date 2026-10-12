@@ -56,6 +56,9 @@ class Job:
     pid: int = field(default_factory=os.getpid)
     _log: deque[str] = field(default_factory=lambda: deque(maxlen=LOG_TAIL_LINES), repr=False)
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
+    #: Set only AFTER the final state has been journalled, so a reader that sees ``done``
+    #: also finds the finished record on disk.
+    _finalized: threading.Event = field(default_factory=threading.Event, repr=False)
     _thread: threading.Thread | None = field(default=None, repr=False)
 
     # -- derived -------------------------------------------------------------
@@ -67,7 +70,7 @@ class Job:
 
     @property
     def done(self) -> bool:
-        return self.state in {"succeeded", "failed", "cancelled"}
+        return self.state in {"succeeded", "failed", "cancelled"} and self._finalized.is_set()
 
     def log_tail(self, lines: int = 30) -> list[str]:
         """
@@ -159,6 +162,7 @@ class JobManager:
                 job.finished_at = time.time()
                 job._log.append("[----] cancelled by request")
                 self._journal(job)
+                job._finalized.set()
             return
         except BaseException as exc:  # noqa: BLE001 - a worker thread must never die silently
             with self._lock:
@@ -167,6 +171,7 @@ class JobManager:
                 job.finished_at = time.time()
                 job._log.append(f"[FAIL] {job.error}")
                 self._journal(job)
+                job._finalized.set()
             return
 
         with self._lock:
@@ -185,8 +190,9 @@ class JobManager:
                 job.state = "failed"
                 job.error = result.error_message
                 job.stage = PipelineStage.FAILED.value
-            # Inside the lock, so `done` and the journalled record become visible together.
+            # Inside the lock, and `done` only turns true once the record is on disk.
             self._journal(job)
+            job._finalized.set()
 
     def cancel(self, job_id: str) -> dict[str, Any]:
         """

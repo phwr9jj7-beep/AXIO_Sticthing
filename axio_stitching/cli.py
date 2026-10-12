@@ -136,15 +136,19 @@ def inspect(
     source: Optional[Path] = typer.Option(None, "--source", "-s", show_default=False,
         help="Any dataset: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a tile directory"),
     xml: Optional[Path] = typer.Option(None, "--xml", help="Alias for --source (Zeiss XML)", show_default=False),
+    keyence_step: str = typer.Option("auto", "--keyence-step", help="Keyence .bcf only: auto (measure the tile step from neighbouring tiles; falls back to the corner points with a warning) | measured (fail instead) | edgepoints (AXIO <= 1.2.1) | overlap"),
+    full: bool = typer.Option(False, "--full", help="List every tile in --json output (default: scenes with more than 200 tiles are summarised)"),
     json_output: bool = typer.Option(False, "--json", help="Output JSON"),
 ) -> None:
-    """Parse and display Zeiss XML metadata (scenes, tiles, channels, Z)."""
-    from .engine import StitchingEngine
+    """Parse and display dataset metadata (scenes, tiles, stage model)."""
+    from .engine import StitchingEngine, summarize_inspect
 
     try:
         source_path = _resolve_source(source, xml)
-        config = StitchConfig(source=source_path, out_dir=Path.cwd())
+        config = StitchConfig(source=source_path, out_dir=Path.cwd(), keyence_step=keyence_step)
         metadata = StitchingEngine(config).inspect_metadata()
+        if not full:
+            summarize_inspect(metadata)
     except Exception as exc:
         if _emit({"error": str(exc)}, json_output):
             raise typer.Exit(1)
@@ -160,7 +164,8 @@ def inspect(
     table.add_column("Sample file", style="dim")
     for scene in metadata.get("scenes", []):
         tiles = scene.get("tiles", [])
-        table.add_row(str(scene["scene_id"]), str(len(tiles)), tiles[0]["filename"] if tiles else "-")
+        count = scene.get("tiles_total", len(tiles))
+        table.add_row(str(scene["scene_id"]), str(count), tiles[0]["filename"] if tiles else "-")
     console.print("\n")
     console.print(table)
     console.print(
@@ -170,6 +175,20 @@ def inspect(
     )
     if metadata.get("pixel_scale_um"):
         console.print(f"[dim]Pixel scale:[/dim] {metadata['pixel_scale_um']:.4f} um/px")
+    stage = metadata.get("stage_model")
+    if stage:
+        if stage.get("method") == "measured":
+            console.print(
+                f"[dim]Tile step (measured):[/dim] x {stage['sx']:.2f} px, y {stage['sy']:.2f} px, "
+                f"odd-row offset ({stage['bx']:+.2f}, {stage['by']:+.2f}) px"
+            )
+        else:
+            console.print(f"[dim]Tile step ({stage.get('method')}):[/dim] "
+                          f"x {stage.get('step_x_px')} px, y {stage.get('step_y_px')} px")
+    for note in metadata.get("notes", []):
+        console.print(f"  [dim]-[/dim] {note}")
+    for warning in metadata.get("warnings", []):
+        console.print(f"  [yellow]![/yellow] {warning}")
 
 
 # ---------------------------------------------------------------------------
@@ -182,8 +201,9 @@ def estimate(
         help="Any dataset: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a tile directory"),
     xml: Optional[Path] = typer.Option(None, "--xml", help="Alias for --source (Zeiss XML)", show_default=False),
     out_dir: Path = typer.Option(..., "--out-dir", help="Intended output directory", show_default=False),
-    correction: str = typer.Option("basicpy", "--correction", help="[basicpy|median|spatial|none]"),
-    algorithm: str = typer.Option("phase", "--algorithm", help="[phase|sift|coordinate]"),
+    correction: str = typer.Option("auto", "--correction", help="[auto|basicpy|median|spatial|none]; auto = by source type"),
+    algorithm: str = typer.Option("auto", "--algorithm", help="[auto|phase|sift|coordinate]; auto = by source type"),
+    keyence_step: str = typer.Option("auto", "--keyence-step", help="Keyence .bcf only: auto (measure the tile step from neighbouring tiles; falls back to the corner points with a warning) | measured (fail instead) | edgepoints (AXIO <= 1.2.1) | overlap"),
     scene: Optional[int] = typer.Option(None, "--scene", help="Single scene index (0-based)"),
     ref_tag: str = typer.Option("", "--ref-tag", help="Split-channel reference tag"),
     target_tags: str = typer.Option("", "--target-tags", help="Comma-separated target channel tags"),
@@ -209,6 +229,7 @@ def estimate(
             overlap=overlap,
             grid_cols=grid_cols,
             pixel_size_um=pixel_size_um,
+            keyence_step=keyence_step,
         )
         result = estimate_stitch(config)
     except Exception as exc:
@@ -273,8 +294,9 @@ def validate(
         help="Any dataset: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a tile directory"),
     xml: Optional[Path] = typer.Option(None, "--xml", help="Alias for --source (Zeiss XML)", show_default=False),
     out_dir: Path = typer.Option(Path("./output"), "--out-dir", help="Output directory to check"),
-    correction: str = typer.Option("basicpy", "--correction"),
-    algorithm: str = typer.Option("phase", "--algorithm"),
+    correction: str = typer.Option("auto", "--correction", help="[auto|basicpy|median|spatial|none]"),
+    algorithm: str = typer.Option("auto", "--algorithm", help="[auto|phase|sift|coordinate]"),
+    keyence_step: str = typer.Option("auto", "--keyence-step", help="Keyence .bcf only: auto (measure the tile step from neighbouring tiles; falls back to the corner points with a warning) | measured (fail instead) | edgepoints (AXIO <= 1.2.1) | overlap"),
     scene: Optional[int] = typer.Option(None, "--scene"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -288,6 +310,7 @@ def validate(
             correction=correction,
             algorithm=algorithm,
             scene=scene,
+            keyence_step=keyence_step,
         )
         result = StitchingEngine(config).validate_config()
     except Exception as exc:
@@ -321,8 +344,9 @@ def stitch(
         help="Any dataset: Zeiss XML, Fiji TileConfiguration.txt, OME-TIFF, positions .json, or a tile directory"),
     xml: Optional[Path] = typer.Option(None, "--xml", help="Alias for --source (Zeiss XML)", show_default=False),
     out_dir: Path = typer.Option(..., "--out-dir", help="Output directory", show_default=False),
-    correction: str = typer.Option("basicpy", "--correction", help="[basicpy|median|spatial|none]"),
-    algorithm: str = typer.Option("phase", "--algorithm", help="[phase|sift|coordinate]"),
+    correction: str = typer.Option("auto", "--correction", help="[auto|basicpy|median|spatial|none]; auto = by source type (Keyence: none, else basicpy)"),
+    algorithm: str = typer.Option("auto", "--algorithm", help="[auto|phase|sift|coordinate]; auto = by source type (Keyence: coordinate, else phase)"),
+    keyence_step: str = typer.Option("auto", "--keyence-step", help="Keyence .bcf only: auto (measure the tile step from neighbouring tiles; falls back to the corner points with a warning) | measured (fail instead) | edgepoints (AXIO <= 1.2.1) | overlap"),
     scene: Optional[int] = typer.Option(None, "--scene", help="Single scene index (0-based). Default: all."),
     ref_channel: int = typer.Option(0, "--ref-channel", help="Reference channel index"),
     ref_tag: str = typer.Option("", "--ref-tag", help="Reference tag for split-channel TIFFs"),
@@ -355,6 +379,7 @@ def stitch(
             overlap=overlap,
             grid_cols=grid_cols,
             pixel_size_um=pixel_size_um,
+            keyence_step=keyence_step,
         )
     except Exception as exc:
         if _emit({"success": False, "error_message": str(exc)}, json_output):
@@ -419,12 +444,13 @@ def stitch(
 def qc(
     path: Path = typer.Argument(..., help="Stitched .tif to measure"),
     frame: Optional[int] = typer.Option(None, "--frame", help="Page index for a multi-channel / Z-stack file"),
+    positions: Optional[Path] = typer.Option(None, "--positions", help="Tile layout for the ghost test (default: the <mosaic>_positions.json sidecar)"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Measure a stitched mosaic: empty area, clipping, dynamic range, seam prominence."""
+    """Measure a stitched mosaic: empty area, clipping, dynamic range, seams, overlap ghosts."""
     from .qc import qc_report
 
-    report = qc_report(path, frame=frame)
+    report = qc_report(path, frame=frame, positions=positions)
     payload = report.to_dict()
     if _emit(payload, json_output):
         raise typer.Exit(0 if report.ok else 1)
@@ -442,6 +468,10 @@ def qc(
     table.add_row("Mean / std", f"{metrics['mean']} / {metrics['std']}")
     table.add_row("Range (p1..p99)", f"{metrics['percentiles']['p1']:.0f} .. {metrics['percentiles']['p99']:.0f}")
     table.add_row("Empty fraction", f"{metrics['empty_fraction']:.2%}")
+    for axis in ("x", "y"):
+        g = metrics.get(f"ghost_excess_{axis}")
+        table.add_row(f"Ghost excess {axis}",
+                      "n/a (no layout)" if g is None else f"{g:.3f} at {metrics.get(f'ghost_lag_{axis}')} px")
     table.add_row("Saturated fraction", f"{metrics['saturated_fraction']:.4%}")
     table.add_row("Seam prominence x / y", f"{metrics['seam_prominence_x']} / {metrics['seam_prominence_y']}")
     console.print("\n")

@@ -217,3 +217,18 @@ the server command and bakes `AXIO_Stitching_Studio.exe` as `AXIO_STITCHING_APP`
 | Antigravity loads the skill but shows "No MCP Servers" | The server key belongs in the **shared** `~/.gemini/config/mcp_config.json`, which is where the installer puts it. Check `axio agent status --json`. |
 | `axio_launch_gui` cannot find the app | Set `AXIO_STITCHING_APP` to the executable and re-run `axio agent install`. |
 | The server starts but every path fails with a decode error | `PYTHONUTF8=1` is missing from the registered entry — re-run `axio agent install` rather than hand-editing. |
+
+## Developing AXIO: registering the source checkout
+
+The repository used to ship a project `.mcp.json` that launched `python -m
+axio_stitching.mcp_server`. On machines where `python` on `PATH` is not the development
+interpreter (on Windows it is often Python 2.7 or the Microsoft Store alias), that server failed
+to connect and shadowed a working registration of the same name. It is no longer tracked. To run
+the MCP server from a source checkout, register it with the interpreter that has the editable
+install, for example:
+
+```bash
+claude mcp add axio-stitching-dev --scope local -- "<repo>/.venv/Scripts/python.exe" -m axio_stitching.mcp_server
+```
+
+End users keep using `axio agent install`, which registers the installed application.

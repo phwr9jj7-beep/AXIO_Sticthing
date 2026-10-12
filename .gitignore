@@ -61,3 +61,5 @@ build/
 # Editable install metadata (pip install -e .)
 *.egg-info/
 
+# Per-developer MCP registration (see docs/AGENT_INTEGRATION.md, 'Developing AXIO')
+.mcp.json
