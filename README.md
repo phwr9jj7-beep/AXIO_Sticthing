@@ -228,6 +228,13 @@ was written — anything you have since edited is reported as drift and left alo
 See **[docs/AGENT_INTEGRATION.md](docs/AGENT_INTEGRATION.md)** for the per-platform paths,
 the full tool list, and the safety contract.
 
+## 🎨 Design
+
+AXIO follows the **LabOnoM Design Guide** (`LabOnoM/design`, version in `DESIGN_VERSION`) through its "Lab Canvas" profile,
+delivered as the Qt palette `design/lab-canvas.qss`. `DESIGN.md` at this repository's root is the pinned family file
+"AROS Deep Space"; `scripts/design-pin-check.sh` and `tests/test_design_pin.py` verify it. Adopting the palette in the
+GUI replaces the hard-coded colours and is the next UI task. See `.wiki/design-guide.md`.
+
 ## 🧪 Testing
 
 ```bash
