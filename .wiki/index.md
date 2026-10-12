@@ -8,6 +8,8 @@ Welcome to the internal knowledge base for the Zeiss Axio Microscope stitching p
 
 ## 🗺️ Table of Contents
 
+- [[design-guide]] — the LabOnoM Design Guide as pinned here (Lab Canvas profile, Qt palette, glossary, states)
+
 ### 📖 Project Documentation
 - **[[overview]]**: Comprehensive project overview, dataset details, stitching pipeline stages, and the Tikhonov origin-anchoring regularizer.
 - **[[timeline]]**: Chronology of imaging runs, onboarding stages, and development milestones.
