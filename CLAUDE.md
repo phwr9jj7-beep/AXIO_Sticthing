@@ -10,3 +10,14 @@ For this PySide6 application the profile arrives as a Qt palette: `design/lab-ca
 from the Lab Canvas tokens (dark theme, the profile's default). Adopting it in `scripts/gui_stitch.py` in place of
 the hard-coded hex values is the next UI task for AXIO and needs a visual check on a display before it ships; until
 then this file records the target, and `tests/test_design_pin.py` keeps the pinned guide honest.
+
+## Code-review stop rules (lab-canvas-kit D-128)
+
+Canonical policy: `LabOnoM/lab-canvas-kit` `doc/CODE_REVIEW_STOP_RULES.md`. Every independent adversarial code review MUST obey these six rules:
+
+1. **Hard round cap (max 3 rounds/slice):** Round 1 = full audit; Round 2 = verify Round 1 fixes; Round 3 = final check. If any `BLOCKER` or `HIGH` remains after Round 3, stop and escalate to the owner — never run an unbounded loop.
+2. **Freeze threat model & scope before Round 1 (+ live-repro gate):** Only violations of explicit SPEC clauses under the agreed threat model may block; newly proposed threat models go to owner decision items. Any `BLOCKER`/`HIGH` asserted by a static-only reviewer about runtime, OS, or framework behaviour is a candidate until confirmed by a quick live reproduction (drop immediately if not reproduced).
+3. **Narrow Round 2+ scope:** Round 2+ prompts restrict the reviewer to verifying closure of prior-round findings and regressions introduced by those fixes — no open-ended whole-codebase re-audits.
+4. **Auto-defer `MEDIUM`/`LOW` polish:** Once `BLOCKER == 0` and `HIGH == 0`, terminate review immediately; defer `MEDIUM`/`LOW` items to a follow-up slice or checkpoint note and never start another round for polish.
+5. **Shared budget across model fallbacks:** Any fallback reviewer shares the same 3-round total cap and inherits the narrowed Round 2+ scope (never restarts a fresh full audit).
+6. **Smaller slices:** Keep each slice small enough that adversarial review converges within 1–2 rounds.
